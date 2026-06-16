@@ -121,6 +121,22 @@ async function createTables() {
     ) ENGINE=InnoDB;
   `;
 
+  const createNotificationsTable = `
+    CREATE TABLE IF NOT EXISTS notifications (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      vendor_id INT NOT NULL,
+      type VARCHAR(50) NOT NULL DEFAULT 'info',
+      title VARCHAR(255) NOT NULL,
+      body TEXT NOT NULL,
+      chat_id VARCHAR(50) DEFAULT NULL,
+      sender_name VARCHAR(255) DEFAULT NULL,
+      is_read TINYINT(1) NOT NULL DEFAULT 0,
+      timestamp VARCHAR(50) DEFAULT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (vendor_id) REFERENCES vendors(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB;
+  `;
+
   let connection;
   try {
     connection = await pool.getConnection();
@@ -132,6 +148,9 @@ async function createTables() {
 
     await connection.query(createMessagesTable);
     console.log('[Database] Messages table verified/created successfully.');
+
+    await connection.query(createNotificationsTable);
+    console.log('[Database] Notifications table verified/created successfully.');
 
     // Gracefully alter table to add columns for profile details if they don't exist
     const alterQueries = [

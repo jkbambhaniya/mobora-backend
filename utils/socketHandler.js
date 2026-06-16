@@ -1,5 +1,6 @@
 const { Server } = require('socket.io');
 const db = require('../config/db');
+const notificationModel = require('../models/notificationModel');
 
 let io = null;
 const onlineVendors = new Map(); // maps vendorId (number) -> Array of socket IDs
@@ -258,6 +259,31 @@ function init(server, corsOptions) {
               // 4. Broadcast sidebar update to the member
               const sessions = await fetchVendorSessions(memberId);
               io.to(`vendor-${memberId}`).emit('sessions_update', sessions);
+
+              // 5. Notify member if online but not viewing this group chat
+              if (!isSender && !isViewing) {
+                const isMemberOnline = onlineVendors.has(memberId) && onlineVendors.get(memberId).length > 0;
+                if (isMemberOnline) {
+                  const notifBody = attachment ? `📎 ${attachment.name}` : (text || 'Sent a message');
+                  const bodyWithSender = `${senderName}: ${notifBody.length > 70 ? notifBody.slice(0, 70) + '…' : notifBody}`;
+                  // Persist to DB
+                  await notificationModel.createNotification({
+                    vendorId: memberId,
+                    type: 'group_message',
+                    title: groupCheck[0].group_name,
+                    body: bodyWithSender,
+                    chatId: memberChatId,
+                    senderName: senderName
+                  });
+                  io.to(`vendor-${memberId}`).emit('new_notification', {
+                    type: 'group_message',
+                    title: groupCheck[0].group_name,
+                    body: bodyWithSender,
+                    chatId: memberChatId,
+                    senderName: senderName
+                  });
+                }
+              }
             }
           }
         } else if (recipientVendorId) {
@@ -369,6 +395,33 @@ function init(server, corsOptions) {
           const sessionsB = await fetchVendorSessions(recipientVendorId);
           io.to(`vendor-${vendorId}`).emit('sessions_update', sessionsA);
           io.to(`vendor-${recipientVendorId}`).emit('sessions_update', sessionsB);
+
+          // 7. Notify recipient if online but NOT viewing the chat
+          const recipientRoom = io.sockets.adapter.rooms.get(`chat-${chatIdB}`);
+          const recipientIsViewing = recipientRoom && recipientRoom.size > 0;
+          if (isRecipientOnline && !recipientIsViewing) {
+            // Fetch sender name for notification
+            const [senderNameRes] = await db.query(`SELECT name FROM vendors WHERE id = ?`, [vendorId]);
+            const senderDisplayName = senderNameRes.length > 0 ? senderNameRes[0].name : 'A vendor';
+            const notifBody = attachment ? `📎 ${attachment.name}` : (text || 'Sent a message');
+            const notifBodyTrimmed = notifBody.length > 80 ? notifBody.slice(0, 80) + '…' : notifBody;
+            // Persist to DB
+            await notificationModel.createNotification({
+              vendorId: recipientVendorId,
+              type: 'vendor_message',
+              title: `New message from ${senderDisplayName}`,
+              body: notifBodyTrimmed,
+              chatId: chatIdB,
+              senderName: senderDisplayName
+            });
+            io.to(`vendor-${recipientVendorId}`).emit('new_notification', {
+              type: 'vendor_message',
+              title: `New message from ${senderDisplayName}`,
+              body: notifBodyTrimmed,
+              chatId: chatIdB,
+              senderName: senderDisplayName
+            });
+          }
 
         } else {
           // --- B2C CUSTOMER SIMULATOR ROUTING ---
@@ -623,6 +676,34 @@ function triggerCustomerSimulator(chatId, vendorId, vendorText) {
       // Refresh list
       const sessions = await fetchVendorSessions(vendorId);
       io.to(`vendor-${vendorId}`).emit('sessions_update', sessions);
+
+      // Notify vendor if online but NOT currently viewing this chat
+      if (unreadIncrement > 0) {
+        const isVendorOnline = onlineVendors.has(vendorId) && onlineVendors.get(vendorId).length > 0;
+        if (isVendorOnline) {
+          // Look up customer name for notification title
+          const [chatSessionRes] = await db.query(`SELECT customer_name FROM chat_sessions WHERE chat_id = ? AND vendor_id = ?`, [chatId, vendorId]);
+          const customerName = chatSessionRes.length > 0 ? chatSessionRes[0].customer_name : 'A customer';
+          const notifBody = replyAttachment ? `📎 ${replyAttachment.name}` : (replyText || 'Sent a message');
+          const notifBodyTrimmed = notifBody.length > 80 ? notifBody.slice(0, 80) + '…' : notifBody;
+          // Persist to DB
+          await notificationModel.createNotification({
+            vendorId: vendorId,
+            type: 'new_message',
+            title: `New message from ${customerName}`,
+            body: notifBodyTrimmed,
+            chatId: chatId,
+            senderName: customerName
+          });
+          io.to(`vendor-${vendorId}`).emit('new_notification', {
+            type: 'new_message',
+            title: `New message from ${customerName}`,
+            body: notifBodyTrimmed,
+            chatId: chatId,
+            senderName: customerName
+          });
+        }
+      }
 
     } catch (err) {
       console.error('[Socket Simulator] Failed to save/broadcast simulated customer reply:', err.message);
