@@ -62,7 +62,7 @@ npm run dev
 
 The server will start at **[http://localhost:5000](http://localhost:5000)**.
 
-> The `mobora` database and all tables are **automatically created** on first boot. No manual SQL setup required.
+> The `mobora` database and all tables are **automatically created** on first boot. No manual SQL setup required. You can also run database migrations and seed data using the [Database Commands](#-database-commands).
 
 ---
 
@@ -342,6 +342,38 @@ npm start      # Start server with node (production)
 ```
 
 > **Tip:** For live-reload during development, install `nodemon` globally and use `nodemon index.js`.
+
+---
+
+## 🗃️ Database Commands
+
+The backend uses **Sequelize** for database management. You can run migrations, reset the database, and seed initial data using the following commands:
+
+### Using NPM Scripts (Recommended)
+
+```bash
+# Run all pending database migrations
+npm run db:migrate
+
+# Reset the database (rollback all migrations) and run them again from scratch
+npm run db:migrate:fresh
+
+# Run all database seeders
+npm run db:seed
+```
+
+### Using Sequelize CLI (Alternative)
+
+```bash
+# Run all pending migrations
+npx sequelize-cli db:migrate
+
+# Undo all migrations and re-run them (Fresh migrate)
+npx sequelize-cli db:migrate:undo:all && npx sequelize-cli db:migrate
+
+# Run all seeders
+npx sequelize-cli db:seed:all
+```
 
 ---
 
