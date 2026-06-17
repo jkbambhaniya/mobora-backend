@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
-const chatController = require('../controllers/chatController');
-const { authenticateToken, requireRole } = require('../middleware/authMiddleware');
+const chatController = require('../../controllers/vendor/ChatController');
+const { authenticateToken, requireRole } = require('../../middleware/authMiddleware');
 
 // Protected endpoints (requires valid JWT token and 'vendor' role)
 router.get('/sessions', authenticateToken, requireRole('vendor'), chatController.getSessions);

@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
-const notificationController = require('../controllers/notificationController');
-const { authenticateToken, requireRole } = require('../middleware/authMiddleware');
+const notificationController = require('../../controllers/vendor/NotificationController');
+const { authenticateToken, requireRole } = require('../../middleware/authMiddleware');
 
 // All routes require a valid vendor JWT
 router.use(authenticateToken, requireRole('vendor'));

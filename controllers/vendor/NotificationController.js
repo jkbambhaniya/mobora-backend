@@ -1,4 +1,20 @@
-const notificationModel = require('../models/notificationModel');
+const { Notification } = require('../../models');
+
+/**
+ * Format notification to API response shape
+ */
+function formatNotification(row) {
+  return {
+    id: `notif-${row.id}`,
+    type: row.type,
+    title: row.title,
+    body: row.body,
+    chatId: row.chat_id,
+    senderName: row.sender_name,
+    isRead: row.is_read === true || row.is_read === 1,
+    timestamp: row.timestamp
+  };
+}
 
 /**
  * GET /api/notifications
@@ -7,8 +23,16 @@ const notificationModel = require('../models/notificationModel');
 async function getNotifications(req, res) {
   try {
     const vendorId = req.user.id;
-    const notifications = await notificationModel.getNotificationsByVendor(vendorId);
-    res.json({ success: true, notifications });
+    const notifications = await Notification.findAll({
+      where: { vendor_id: vendorId },
+      order: [['created_at', 'DESC']],
+      limit: 50
+    });
+    
+    res.json({ 
+      success: true, 
+      notifications: notifications.map(formatNotification) 
+    });
   } catch (err) {
     console.error('[NotificationController] getNotifications error:', err.message);
     res.status(500).json({ success: false, message: 'Failed to fetch notifications.' });
@@ -25,7 +49,12 @@ async function markRead(req, res) {
     const rawId = req.params.id; // e.g. "notif-42"
     const dbId = parseInt(rawId.replace('notif-', ''), 10);
     if (isNaN(dbId)) return res.status(400).json({ success: false, message: 'Invalid notification id.' });
-    await notificationModel.markNotificationRead(dbId, vendorId);
+
+    await Notification.update(
+      { is_read: true },
+      { where: { id: dbId, vendor_id: vendorId } }
+    );
+    
     res.json({ success: true });
   } catch (err) {
     console.error('[NotificationController] markRead error:', err.message);
@@ -40,7 +69,10 @@ async function markRead(req, res) {
 async function markAllRead(req, res) {
   try {
     const vendorId = req.user.id;
-    await notificationModel.markAllNotificationsRead(vendorId);
+    await Notification.update(
+      { is_read: true },
+      { where: { vendor_id: vendorId } }
+    );
     res.json({ success: true });
   } catch (err) {
     console.error('[NotificationController] markAllRead error:', err.message);
@@ -58,7 +90,11 @@ async function deleteNotification(req, res) {
     const rawId = req.params.id;
     const dbId = parseInt(rawId.replace('notif-', ''), 10);
     if (isNaN(dbId)) return res.status(400).json({ success: false, message: 'Invalid notification id.' });
-    await notificationModel.deleteNotification(dbId, vendorId);
+
+    await Notification.destroy({
+      where: { id: dbId, vendor_id: vendorId }
+    });
+    
     res.json({ success: true });
   } catch (err) {
     console.error('[NotificationController] deleteNotification error:', err.message);
@@ -73,7 +109,9 @@ async function deleteNotification(req, res) {
 async function deleteAllNotifications(req, res) {
   try {
     const vendorId = req.user.id;
-    await notificationModel.deleteAllNotifications(vendorId);
+    await Notification.destroy({
+      where: { vendor_id: vendorId }
+    });
     res.json({ success: true });
   } catch (err) {
     console.error('[NotificationController] deleteAllNotifications error:', err.message);

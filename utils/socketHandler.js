@@ -1,6 +1,6 @@
 const { Server } = require('socket.io');
-const db = require('../config/db');
-const notificationModel = require('../models/notificationModel');
+const { ChatSession, Message, Vendor, Notification, sequelize } = require('../models');
+const { Op } = require('sequelize');
 
 let io = null;
 const onlineVendors = new Map(); // maps vendorId (number) -> Array of socket IDs
@@ -8,19 +8,25 @@ const onlineVendors = new Map(); // maps vendorId (number) -> Array of socket ID
 async function updateVendorOnlineStatus(vendorId, status) {
   try {
     // 1. Update status in chat_sessions where this vendor is the recipient
-    const updateSql = `UPDATE chat_sessions SET status = ? WHERE recipient_vendor_id = ?`;
-    await db.query(updateSql, [status, vendorId]);
+    await ChatSession.update(
+      { status },
+      { where: { recipient_vendor_id: vendorId } }
+    );
 
     // 2. Find all vendors (owners of these sessions) who need to be notified
-    const findOwnersSql = `SELECT DISTINCT vendor_id FROM chat_sessions WHERE recipient_vendor_id = ?`;
-    const [owners] = await db.query(findOwnersSql, [vendorId]);
+    const sessions = await ChatSession.findAll({
+      where: { recipient_vendor_id: vendorId },
+      attributes: ['vendor_id'],
+      group: ['vendor_id'],
+      raw: true
+    });
 
     // 3. For each owner, fetch updated sessions and emit to their socket room
-    for (const owner of owners) {
-      const ownerId = owner.vendor_id;
-      const sessions = await fetchVendorSessions(ownerId);
+    for (const session of sessions) {
+      const ownerId = session.vendor_id;
+      const updatedSessions = await fetchVendorSessions(ownerId);
       if (io) {
-        io.to(`vendor-${ownerId}`).emit('sessions_update', sessions);
+        io.to(`vendor-${ownerId}`).emit('sessions_update', updatedSessions);
       }
     }
   } catch (err) {
@@ -31,15 +37,24 @@ async function updateVendorOnlineStatus(vendorId, status) {
 async function syncVendorSessionsOnlineStatus(vendorId) {
   try {
     // Get all B2B sessions for this vendor
-    const getB2bSessionsSql = `SELECT chat_id, recipient_vendor_id FROM chat_sessions WHERE vendor_id = ? AND recipient_vendor_id IS NOT NULL`;
-    const [sessions] = await db.query(getB2bSessionsSql, [vendorId]);
+    const sessions = await ChatSession.findAll({
+      where: {
+        vendor_id: vendorId,
+        recipient_vendor_id: { [Op.ne]: null }
+      },
+      attributes: ['chat_id', 'recipient_vendor_id'],
+      raw: true
+    });
 
     for (const session of sessions) {
       const recipientId = session.recipient_vendor_id;
       const isRecipientOnline = onlineVendors.has(recipientId) && onlineVendors.get(recipientId).length > 0;
       const currentStatus = isRecipientOnline ? 'online' : 'offline';
 
-      await db.query(`UPDATE chat_sessions SET status = ? WHERE chat_id = ?`, [currentStatus, session.chat_id]);
+      await ChatSession.update(
+        { status: currentStatus },
+        { where: { chat_id: session.chat_id } }
+      );
     }
   } catch (err) {
     console.error('[Socket] Failed to sync vendor sessions online status:', err.message);
@@ -49,16 +64,22 @@ async function syncVendorSessionsOnlineStatus(vendorId) {
 async function markChatMessagesAsRead(chatId, vendorId) {
   try {
     // 1. Verify session belongs to vendor
-    const sessionSql = `SELECT recipient_vendor_id FROM chat_sessions WHERE chat_id = ? AND vendor_id = ?`;
-    const [session] = await db.query(sessionSql, [chatId, vendorId]);
-    if (session.length === 0) return;
+    const session = await ChatSession.findOne({
+      where: { chat_id: chatId, vendor_id: vendorId }
+    });
+    if (!session) return;
 
     // 2. Mark customer messages in this chat as read
-    const readMsgSql = `UPDATE messages SET status = 'read' WHERE chat_id = ? AND sender = 'customer' AND status != 'read'`;
-    await db.query(readMsgSql, [chatId]);
+    await Message.update(
+      { status: 'read' },
+      { where: { chat_id: chatId, sender: 'customer', status: { [Op.ne]: 'read' } } }
+    );
 
     // 3. Clear unread count for this session
-    await db.query(`UPDATE chat_sessions SET unread_count = 0 WHERE chat_id = ? AND vendor_id = ?`, [chatId, vendorId]);
+    await ChatSession.update(
+      { unread_count: 0 },
+      { where: { chat_id: chatId, vendor_id: vendorId } }
+    );
 
     // 4. Broadcast sidebar update to the current vendor
     const sessions = await fetchVendorSessions(vendorId);
@@ -67,13 +88,15 @@ async function markChatMessagesAsRead(chatId, vendorId) {
     }
 
     // 5. If B2B, update recipient's vendor messages and notify
-    if (session[0].recipient_vendor_id) {
-      const recipientId = session[0].recipient_vendor_id;
+    if (session.recipient_vendor_id) {
+      const recipientId = session.recipient_vendor_id;
       const chatIdB = `chat-${recipientId}-${vendorId}`;
 
       // Update Vendor B's sent messages in their room to 'read'
-      const updateMsgBSql = `UPDATE messages SET status = 'read' WHERE chat_id = ? AND sender = 'vendor' AND status != 'read'`;
-      await db.query(updateMsgBSql, [chatIdB]);
+      await Message.update(
+        { status: 'read' },
+        { where: { chat_id: chatIdB, sender: 'vendor', status: { [Op.ne]: 'read' } } }
+      );
 
       if (io) {
         // Emit messages_read to Vendor B's chat room
@@ -179,29 +202,28 @@ function init(server, corsOptions) {
         const lastMsgText = attachment ? `Attached: ${attachment.name}` : text;
 
         // Check if B2B chat session (has recipient_vendor_id)
-        const checkB2bSql = `SELECT recipient_vendor_id FROM chat_sessions WHERE chat_id = ? AND vendor_id = ?`;
-        const [sessionCheck] = await db.query(checkB2bSql, [chatId, vendorId]);
-        const recipientVendorId = sessionCheck.length > 0 ? sessionCheck[0].recipient_vendor_id : null;
+        const sessionCheck = await ChatSession.findOne({
+          where: { chat_id: chatId, vendor_id: vendorId }
+        });
+        const recipientVendorId = sessionCheck ? sessionCheck.recipient_vendor_id : null;
+
+        const attachmentType = attachment ? attachment.type : null;
+        const attachmentName = attachment ? attachment.name : null;
+        const attachmentSize = attachment ? attachment.size || null : null;
+        const attachmentUrl = attachment ? attachment.url : null;
 
         if (chatId.startsWith('group-')) {
           // --- B2B GROUP CHAT ROUTING ---
           console.log(`[Socket Group] Routing B2B group message from Vendor ${vendorId} in chat ${chatId}: ${text}`);
 
-          const getGroupSql = `SELECT group_members, group_name FROM chat_sessions WHERE chat_id = ? AND vendor_id = ?`;
-          const [groupCheck] = await db.query(getGroupSql, [chatId, vendorId]);
-          if (groupCheck.length > 0) {
-            const groupMembers = JSON.parse(groupCheck[0].group_members || '[]');
+          if (sessionCheck) {
+            const groupMembers = JSON.parse(sessionCheck.group_members || '[]');
 
             // Get sender details
-            const [senderRes] = await db.query(`SELECT name FROM vendors WHERE id = ?`, [vendorId]);
-            const senderName = senderRes.length > 0 ? senderRes[0].name : 'Dealer';
+            const sender = await Vendor.findByPk(vendorId);
+            const senderName = sender ? sender.name : 'Dealer';
 
             const baseGroupId = chatId.split('-').slice(0, 2).join('-'); // e.g. group-123456789
-
-            const attachmentType = attachment ? attachment.type : null;
-            const attachmentName = attachment ? attachment.name : null;
-            const attachmentSize = attachment ? attachment.size || null : null;
-            const attachmentUrl = attachment ? attachment.url : null;
 
             for (const memberId of groupMembers) {
               const memberChatId = `${baseGroupId}-${memberId}`;
@@ -216,36 +238,34 @@ function init(server, corsOptions) {
               const msgStatus = isSender ? 'sent' : (isViewing ? 'read' : 'unread');
 
               // 1. Insert message for this member's thread
-              const insertMsgSql = `
-                INSERT INTO messages (chat_id, sender, sender_id, sender_name, text, timestamp, status, attachment_type, attachment_name, attachment_size, attachment_url)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-              `;
-              const [result] = await db.query(insertMsgSql, [
-                memberChatId,
-                msgSender,
-                vendorId,
-                senderName,
+              const result = await Message.create({
+                chat_id: memberChatId,
+                sender: msgSender,
+                sender_id: vendorId,
+                sender_name: senderName,
                 text,
                 timestamp,
-                msgStatus,
-                attachmentType,
-                attachmentName,
-                attachmentSize,
-                attachmentUrl
-              ]);
+                status: msgStatus,
+                attachment_type: attachmentType,
+                attachment_name: attachmentName,
+                attachment_size: attachmentSize,
+                attachment_url: attachmentUrl
+              });
 
               // 2. Update member's chat session
               const unreadIncrement = (isSender || isViewing) ? 0 : 1;
-              const updateSessionSql = `
-                UPDATE chat_sessions 
-                SET last_message = ?, last_active = 'Just now', unread_count = unread_count + ?
-                WHERE chat_id = ? AND vendor_id = ?
-              `;
-              await db.query(updateSessionSql, [lastMsgText, unreadIncrement, memberChatId, memberId]);
+              await ChatSession.update(
+                {
+                  last_message: lastMsgText,
+                  last_active: 'Just now',
+                  unread_count: sequelize.literal(`unread_count + ${unreadIncrement}`)
+                },
+                { where: { chat_id: memberChatId, vendor_id: memberId } }
+              );
 
               // 3. Emit message to the member's chat room
               const newMsg = {
-                id: `m-${result.insertId}`,
+                id: `m-${result.id}`,
                 sender: msgSender,
                 senderId: vendorId,
                 senderName: senderName,
@@ -266,18 +286,21 @@ function init(server, corsOptions) {
                 if (isMemberOnline) {
                   const notifBody = attachment ? `📎 ${attachment.name}` : (text || 'Sent a message');
                   const bodyWithSender = `${senderName}: ${notifBody.length > 70 ? notifBody.slice(0, 70) + '…' : notifBody}`;
+                  
                   // Persist to DB
-                  await notificationModel.createNotification({
-                    vendorId: memberId,
+                  await Notification.create({
+                    vendor_id: memberId,
                     type: 'group_message',
-                    title: groupCheck[0].group_name,
+                    title: sessionCheck.group_name,
                     body: bodyWithSender,
-                    chatId: memberChatId,
-                    senderName: senderName
+                    chat_id: memberChatId,
+                    sender_name: senderName,
+                    timestamp
                   });
+
                   io.to(`vendor-${memberId}`).emit('new_notification', {
                     type: 'group_message',
-                    title: groupCheck[0].group_name,
+                    title: sessionCheck.group_name,
                     body: bodyWithSender,
                     chatId: memberChatId,
                     senderName: senderName
@@ -291,30 +314,31 @@ function init(server, corsOptions) {
           console.log(`[Socket B2B] Routing B2B message from Vendor ${vendorId} to Recipient Vendor ${recipientVendorId}`);
 
           // 1. Locate or create corresponding chat session for Recipient Vendor B
-          let chatIdB;
-          const getBResSql = `SELECT chat_id FROM chat_sessions WHERE vendor_id = ? AND recipient_vendor_id = ?`;
-          const [bRes] = await db.query(getBResSql, [recipientVendorId, vendorId]);
+          let chatIdB = `chat-${recipientVendorId}-${vendorId}`;
+          let sessionB = await ChatSession.findOne({
+            where: { vendor_id: recipientVendorId, recipient_vendor_id: vendorId }
+          });
           
-          if (bRes.length > 0) {
-            chatIdB = bRes[0].chat_id;
-          } else {
-            // Create session for B
-            chatIdB = `chat-${recipientVendorId}-${vendorId}`;
+          if (!sessionB) {
             // Fetch Vendor A's profile name and shop name
-            const getVendorASql = `SELECT name, shop_name FROM vendors WHERE id = ?`;
-            const [vendorARes] = await db.query(getVendorASql, [vendorId]);
-            const vendorAName = vendorARes.length > 0 ? vendorARes[0].name : 'Other Vendor';
-            const shopName = vendorARes.length > 0 ? vendorARes[0].shop_name : '';
+            const vendorA = await Vendor.findByPk(vendorId);
+            const vendorAName = vendorA ? vendorA.name : 'Other Vendor';
+            const shopName = vendorA ? vendorA.shop_name : '';
             const initials = vendorAName.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) || 'VD';
             
-            const [existingChatB] = await db.query(`SELECT id FROM chat_sessions WHERE chat_id = ?`, [chatIdB]);
-            if (existingChatB.length === 0) {
-              const insertBSession = `
-                INSERT INTO chat_sessions (chat_id, vendor_id, recipient_vendor_id, customer_name, avatar, status, last_message, unread_count, last_active, device_interest, notes)
-                VALUES (?, ?, ?, ?, ?, 'online', ?, 0, 'Just now', ?, 'B2B Trade Partner')
-              `;
-              await db.query(insertBSession, [chatIdB, recipientVendorId, vendorId, vendorAName, initials, lastMsgText, shopName]);
-            }
+            sessionB = await ChatSession.create({
+              chat_id: chatIdB,
+              vendor_id: recipientVendorId,
+              recipient_vendor_id: vendorId,
+              customer_name: vendorAName,
+              avatar: initials,
+              status: 'online',
+              last_message: lastMsgText,
+              unread_count: 0,
+              last_active: 'Just now',
+              device_interest: shopName,
+              notes: 'B2B Trade Partner'
+            });
           }
 
           const isRecipientOnline = onlineVendors.has(recipientVendorId) && onlineVendors.get(recipientVendorId).length > 0;
@@ -330,48 +354,51 @@ function init(server, corsOptions) {
           }
 
           // 2. Insert message for Vendor A (Sender)
-          const insertMsgASql = `
-            INSERT INTO messages (chat_id, sender, text, timestamp, status, attachment_type, attachment_name, attachment_size, attachment_url)
-            VALUES (?, 'vendor', ?, ?, ?, ?, ?, ?, ?)
-          `;
-          const attachmentType = attachment ? attachment.type : null;
-          const attachmentName = attachment ? attachment.name : null;
-          const attachmentSize = attachment ? attachment.size || null : null;
-          const attachmentUrl = attachment ? attachment.url : null;
-
-          const [resultA] = await db.query(insertMsgASql, [
-            chatId, text, timestamp, initialStatus, attachmentType, attachmentName, attachmentSize, attachmentUrl
-          ]);
+          const resultA = await Message.create({
+            chat_id: chatId,
+            sender: 'vendor',
+            text,
+            timestamp,
+            status: initialStatus,
+            attachment_type: attachmentType,
+            attachment_name: attachmentName,
+            attachment_size: attachmentSize,
+            attachment_url: attachmentUrl
+          });
 
           // 3. Insert message for Vendor B (Recipient)
-          const insertMsgBSql = `
-            INSERT INTO messages (chat_id, sender, text, timestamp, status, attachment_type, attachment_name, attachment_size, attachment_url)
-            VALUES (?, 'customer', ?, ?, ?, ?, ?, ?, ?)
-          `;
           const recipientStatus = (initialStatus === 'read') ? 'read' : 'unread';
-          const [resultB] = await db.query(insertMsgBSql, [
-            chatIdB, text, timestamp, recipientStatus, attachmentType, attachmentName, attachmentSize, attachmentUrl
-          ]);
+          const resultB = await Message.create({
+            chat_id: chatIdB,
+            sender: 'customer',
+            text,
+            timestamp,
+            status: recipientStatus,
+            attachment_type: attachmentType,
+            attachment_name: attachmentName,
+            attachment_size: attachmentSize,
+            attachment_url: attachmentUrl
+          });
 
           // 4. Update Chat Sessions last message & active timestamp
-          const updateSessionASql = `
-            UPDATE chat_sessions 
-            SET last_message = ?, last_active = 'Just now', unread_count = 0
-            WHERE chat_id = ? AND vendor_id = ?
-          `;
-          await db.query(updateSessionASql, [lastMsgText, chatId, vendorId]);
+          await ChatSession.update(
+            { last_message: lastMsgText, last_active: 'Just now', unread_count: 0 },
+            { where: { chat_id: chatId, vendor_id: vendorId } }
+          );
 
           const unreadIncrement = (initialStatus === 'read') ? 0 : 1;
-          const updateSessionBSql = `
-            UPDATE chat_sessions 
-            SET last_message = ?, last_active = 'Just now', unread_count = unread_count + ?
-            WHERE chat_id = ? AND vendor_id = ?
-          `;
-          await db.query(updateSessionBSql, [lastMsgText, unreadIncrement, chatIdB, recipientVendorId]);
+          await ChatSession.update(
+            {
+              last_message: lastMsgText,
+              last_active: 'Just now',
+              unread_count: sequelize.literal(`unread_count + ${unreadIncrement}`)
+            },
+            { where: { chat_id: chatIdB, vendor_id: recipientVendorId } }
+          );
 
           // 5. Emit messages to separate room connections
           const newMsgA = {
-            id: `m-${resultA.insertId}`,
+            id: `m-${resultA.id}`,
             sender: 'vendor',
             text,
             timestamp,
@@ -379,7 +406,7 @@ function init(server, corsOptions) {
             attachment
           };
           const newMsgB = {
-            id: `m-${resultB.insertId}`,
+            id: `m-${resultB.id}`,
             sender: 'customer',
             text,
             timestamp,
@@ -401,19 +428,22 @@ function init(server, corsOptions) {
           const recipientIsViewing = recipientRoom && recipientRoom.size > 0;
           if (isRecipientOnline && !recipientIsViewing) {
             // Fetch sender name for notification
-            const [senderNameRes] = await db.query(`SELECT name FROM vendors WHERE id = ?`, [vendorId]);
-            const senderDisplayName = senderNameRes.length > 0 ? senderNameRes[0].name : 'A vendor';
+            const sender = await Vendor.findByPk(vendorId);
+            const senderDisplayName = sender ? sender.name : 'A vendor';
             const notifBody = attachment ? `📎 ${attachment.name}` : (text || 'Sent a message');
             const notifBodyTrimmed = notifBody.length > 80 ? notifBody.slice(0, 80) + '…' : notifBody;
+            
             // Persist to DB
-            await notificationModel.createNotification({
-              vendorId: recipientVendorId,
+            await Notification.create({
+              vendor_id: recipientVendorId,
               type: 'vendor_message',
               title: `New message from ${senderDisplayName}`,
               body: notifBodyTrimmed,
-              chatId: chatIdB,
-              senderName: senderDisplayName
+              chat_id: chatIdB,
+              sender_name: senderDisplayName,
+              timestamp
             });
+
             io.to(`vendor-${recipientVendorId}`).emit('new_notification', {
               type: 'vendor_message',
               title: `New message from ${senderDisplayName}`,
@@ -426,28 +456,20 @@ function init(server, corsOptions) {
         } else {
           // --- B2C CUSTOMER SIMULATOR ROUTING ---
           // 1. Insert message into DB
-          const insertMsgQuery = `
-            INSERT INTO messages (chat_id, sender, text, timestamp, status, attachment_type, attachment_name, attachment_size, attachment_url)
-            VALUES (?, 'vendor', ?, ?, 'delivered', ?, ?, ?, ?)
-          `;
-          const attachmentType = attachment ? attachment.type : null;
-          const attachmentName = attachment ? attachment.name : null;
-          const attachmentSize = attachment ? attachment.size || null : null;
-          const attachmentUrl = attachment ? attachment.url : null;
-
-          const [result] = await db.query(insertMsgQuery, [
-            chatId,
+          const result = await Message.create({
+            chat_id: chatId,
+            sender: 'vendor',
             text,
             timestamp,
-            attachmentType,
-            attachmentName,
-            attachmentSize,
-            attachmentUrl
-          ]);
+            status: 'delivered',
+            attachment_type: attachmentType,
+            attachment_name: attachmentName,
+            attachment_size: attachmentSize,
+            attachment_url: attachmentUrl
+          });
 
-          const messageId = result.insertId;
           const newMsg = {
-            id: `m-${messageId}`,
+            id: `m-${result.id}`,
             sender: 'vendor',
             text,
             timestamp,
@@ -456,12 +478,10 @@ function init(server, corsOptions) {
           };
 
           // 2. Update chat session last message and timestamp
-          const updateSessionQuery = `
-            UPDATE chat_sessions 
-            SET last_message = ?, last_active = 'Just now', unread_count = 0
-            WHERE chat_id = ? AND vendor_id = ?
-          `;
-          await db.query(updateSessionQuery, [lastMsgText, chatId, vendorId]);
+          await ChatSession.update(
+            { last_message: lastMsgText, last_active: 'Just now', unread_count: 0 },
+            { where: { chat_id: chatId, vendor_id: vendorId } }
+          );
 
           // 3. Broadcast message to the chat room
           io.to(`chat-${chatId}`).emit('receive_message', newMsg);
@@ -510,12 +530,10 @@ function getIo() {
  * Fetch all sessions for a vendor
  */
 async function fetchVendorSessions(vendorId) {
-  const query = `
-    SELECT * FROM chat_sessions 
-    WHERE vendor_id = ? 
-    ORDER BY updated_at DESC
-  `;
-  const [sessions] = await db.query(query, [vendorId]);
+  const sessions = await ChatSession.findAll({
+    where: { vendor_id: vendorId },
+    order: [['updated_at', 'DESC']]
+  });
   
   // Format for frontend (rename snake_case keys to camelCase)
   return sessions.map(s => {
@@ -528,7 +546,7 @@ async function fetchVendorSessions(vendorId) {
       }
     }
     return {
-      id: s.chat_id, // Map s.chat_id to API 'id' field for frontend routing
+      id: s.chat_id,
       customerName: s.customer_name,
       customerPhone: s.customer_phone,
       customerEmail: s.customer_email,
@@ -539,7 +557,7 @@ async function fetchVendorSessions(vendorId) {
       lastActive: s.last_active,
       deviceInterest: s.device_interest,
       notes: s.notes,
-      isGroup: s.is_group === 1,
+      isGroup: s.is_group === true || s.is_group === 1,
       groupName: s.group_name,
       groupMembers: parsedMembers
     };
@@ -598,12 +616,10 @@ function triggerCustomerSimulator(chatId, vendorId, vendorText) {
 
     try {
       // Mark all vendor sent/delivered messages as read
-      const updateMsgSql = `
-        UPDATE messages 
-        SET status = 'read' 
-        WHERE chat_id = ? AND sender = 'vendor' AND status != 'read'
-      `;
-      await db.query(updateMsgSql, [chatId]);
+      await Message.update(
+        { status: 'read' },
+        { where: { chat_id: chatId, sender: 'vendor', status: { [Op.ne]: 'read' } } }
+      );
       
       // Emit messages_read event to room
       io.to(`chat-${chatId}`).emit('messages_read', { chatId });
@@ -628,29 +644,25 @@ function triggerCustomerSimulator(chatId, vendorId, vendorText) {
       const unreadIncrement = isViewingThisChat ? 0 : 1;
 
       // Save customer message to DB
-      const insertMsgQuery = `
-        INSERT INTO messages (chat_id, sender, text, timestamp, status, attachment_type, attachment_name, attachment_size, attachment_url)
-        VALUES (?, 'customer', ?, ?, ?, ?, ?, ?, ?)
-      `;
       const attachmentType = replyAttachment ? replyAttachment.type : null;
       const attachmentName = replyAttachment ? replyAttachment.name : null;
       const attachmentSize = replyAttachment ? replyAttachment.size || null : null;
       const attachmentUrl = replyAttachment ? replyAttachment.url : null;
 
-      const [result] = await db.query(insertMsgQuery, [
-        chatId,
-        replyText,
+      const result = await Message.create({
+        chat_id: chatId,
+        sender: 'customer',
+        text: replyText,
         timestamp,
-        initialStatus,
-        attachmentType,
-        attachmentName,
-        attachmentSize,
-        attachmentUrl
-      ]);
+        status: initialStatus,
+        attachment_type: attachmentType,
+        attachment_name: attachmentName,
+        attachment_size: attachmentSize,
+        attachment_url: attachmentUrl
+      });
 
-      const messageId = result.insertId;
       const newCustomerMsg = {
-        id: `m-${messageId}`,
+        id: `m-${result.id}`,
         sender: 'customer',
         text: replyText,
         timestamp,
@@ -659,13 +671,15 @@ function triggerCustomerSimulator(chatId, vendorId, vendorText) {
       };
 
       // Update session last message and unread count
-      const updateSessionQuery = `
-        UPDATE chat_sessions 
-        SET last_message = ?, last_active = 'Just now', unread_count = unread_count + ?
-        WHERE chat_id = ? AND vendor_id = ?
-      `;
       const lastMsgText = replyAttachment ? `Attached: ${replyAttachment.name}` : replyText;
-      await db.query(updateSessionQuery, [lastMsgText, unreadIncrement, chatId, vendorId]);
+      await ChatSession.update(
+        {
+          last_message: lastMsgText,
+          last_active: 'Just now',
+          unread_count: sequelize.literal(`unread_count + ${unreadIncrement}`)
+        },
+        { where: { chat_id: chatId, vendor_id: vendorId } }
+      );
 
       // Turn off typing indicator
       io.to(`chat-${chatId}`).emit('typing_status', { chatId, isTyping: false });
@@ -682,19 +696,24 @@ function triggerCustomerSimulator(chatId, vendorId, vendorText) {
         const isVendorOnline = onlineVendors.has(vendorId) && onlineVendors.get(vendorId).length > 0;
         if (isVendorOnline) {
           // Look up customer name for notification title
-          const [chatSessionRes] = await db.query(`SELECT customer_name FROM chat_sessions WHERE chat_id = ? AND vendor_id = ?`, [chatId, vendorId]);
-          const customerName = chatSessionRes.length > 0 ? chatSessionRes[0].customer_name : 'A customer';
+          const chatSession = await ChatSession.findOne({
+            where: { chat_id: chatId, vendor_id: vendorId }
+          });
+          const customerName = chatSession ? chatSession.customer_name : 'A customer';
           const notifBody = replyAttachment ? `📎 ${replyAttachment.name}` : (replyText || 'Sent a message');
           const notifBodyTrimmed = notifBody.length > 80 ? notifBody.slice(0, 80) + '…' : notifBody;
+          
           // Persist to DB
-          await notificationModel.createNotification({
-            vendorId: vendorId,
+          await Notification.create({
+            vendor_id: vendorId,
             type: 'new_message',
             title: `New message from ${customerName}`,
             body: notifBodyTrimmed,
-            chatId: chatId,
-            senderName: customerName
+            chat_id: chatId,
+            sender_name: customerName,
+            timestamp
           });
+
           io.to(`vendor-${vendorId}`).emit('new_notification', {
             type: 'new_message',
             title: `New message from ${customerName}`,

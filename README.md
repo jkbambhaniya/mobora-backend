@@ -117,11 +117,15 @@ backend/
 │   └── db.js                     # MySQL pool init + auto table migration
 │
 ├── controllers/
-│   ├── vendor/
-│   │   └── authController.js     # register, login, logout, refresh,
-│   │                             # getProfile, updateProfile, changePassword
-│   └── chatController.js         # getSessions, createSession, getVendors,
-│                                 # getMessages, sendMessage, uploadFile
+│   └── vendor/
+│       ├── AuthController.js          # register, login, logout, refresh,
+│       │                              # getProfile, updateProfile, changePassword
+│       ├── ChatController.js          # getSessions, createSession, getVendors,
+│       │                              # getMessages, sendMessage, uploadFile
+│       ├── CustomerController.js      # getCustomers, getCustomer, createCustomer,
+│       │                              # updateCustomer, deleteCustomer, etc.
+│       ├── NotificationController.js  # getNotifications, markRead, markAllRead, etc.
+│       └── SpecificationController.js # getMetrics, getAllSpecs, getBrands, etc.
 │
 ├── middleware/
 │   ├── authMiddleware.js         # JWT verification (authenticateToken)
@@ -133,9 +137,10 @@ backend/
 │
 ├── routes/
 │   ├── index.js                 # Aggregator — mounts all route namespaces
-│   ├── chatRoutes.js            # /api/chat routes
 │   └── vendor/
-│       └── authRoutes.js        # /api/vendor/auth routes
+│       ├── authRoutes.js        # /api/vendor/auth routes
+│       ├── chatRoutes.js        # /api/vendor/chat routes
+│       └── notificationRoutes.js # /api/vendor/notifications routes
 │
 ├── utils/
 │   └── socketHandler.js         # Socket.IO connection & event handling
@@ -199,7 +204,7 @@ Base URL: `http://localhost:5000/api`
 
 ---
 
-### 💬 Chat — `/api/chat`
+### 💬 Chat — `/api/vendor/chat`
 
 | Method | Endpoint                      | Auth | Description                          |
 |--------|-------------------------------|:----:|--------------------------------------|

@@ -1,13 +1,17 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const vendorAuthRoutes = require('./vendor/authRoutes');
-const chatRoutes = require('./chatRoutes');
-const notificationRoutes = require('./notificationRoutes');
+const vendorAuthRoutes = require("./vendor/authRoutes");
+const vendorChatRoutes = require("./vendor/chatRoutes");
+const vendorNotificationRoutes = require("./vendor/notificationRoutes");
+const vendorCustomerRoutes = require("./vendor/customerRoutes");
+const vendorSpecificationRoutes = require("./vendor/specificationRoutes");
 
 // Namespaced API endpoints
-router.use('/vendor/auth', vendorAuthRoutes);
-router.use('/chat', chatRoutes);
-router.use('/notifications', notificationRoutes);
+router.use("/vendor/auth", vendorAuthRoutes);
+router.use("/vendor/chat", vendorChatRoutes);
+router.use("/vendor/notifications", vendorNotificationRoutes);
+router.use("/vendor/customers", vendorCustomerRoutes);
+router.use("/vendor/specifications", vendorSpecificationRoutes);
 
 // Ready for future integration:
 // router.use('/admin/auth', adminAuthRoutes);

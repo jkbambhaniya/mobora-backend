@@ -1,6 +1,6 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const vendorModel = require('../../models/vendorModel');
+const { Vendor } = require('../../models');
 const { sendSuccess, sendError } = require('../../utils/responseHelper');
 const { registerSchema, loginSchema, updateProfileSchema, changePasswordSchema } = require('../../validation/authValidation');
 const { getObfuscatedKey, decryptValue, setAuthCookies, setAccessTokenCookie, clearAuthCookies } = require('../../utils/cryptoHelper');
@@ -21,7 +21,7 @@ async function register(req, res) {
     const trimmedEmail = email.trim().toLowerCase();
 
     // 1. Check for pre-existing vendor email
-    const existingVendor = await vendorModel.findVendorByEmail(trimmedEmail);
+    const existingVendor = await Vendor.findOne({ where: { email: trimmedEmail } });
     if (existingVendor) {
       return sendError(
         res,
@@ -39,7 +39,7 @@ async function register(req, res) {
     const status = AUTO_APPROVE_VENDORS ? 'approved' : 'pending';
 
     // 4. Store vendor in database
-    const newVendor = await vendorModel.createVendor({
+    const newVendor = await Vendor.create({
       name: trimmedName,
       email: trimmedEmail,
       password: hashedPassword,
@@ -78,9 +78,8 @@ async function login(req, res) {
     const trimmedEmail = email.trim().toLowerCase();
 
     // 1. Fetch vendor by email
-    const vendor = await vendorModel.findVendorByEmail(trimmedEmail);
+    const vendor = await Vendor.findOne({ where: { email: trimmedEmail } });
     if (!vendor) {
-      // Return generic error for security to prevent username enumeration
       return sendError(res, 'Invalid email or password.', {}, 401);
     }
 
@@ -152,7 +151,9 @@ async function login(req, res) {
  */
 async function getProfile(req, res) {
   try {
-    const vendor = await vendorModel.findVendorById(req.user.id);
+    const vendor = await Vendor.findByPk(req.user.id, {
+      attributes: { exclude: ['password'] }
+    });
     
     if (!vendor) {
       return sendError(res, 'Vendor profile not found.', {}, 444);
@@ -210,7 +211,7 @@ async function refresh(req, res) {
     }
 
     // Fetch vendor details to verify they still exist and status is approved
-    const vendor = await vendorModel.findVendorById(decoded.id);
+    const vendor = await Vendor.findByPk(decoded.id);
     if (!vendor) {
       return sendError(res, 'Vendor profile not found.', {}, 404);
     }
@@ -249,7 +250,7 @@ async function updateProfile(req, res) {
 
     // Check if new email is in use by another vendor
     if (email) {
-      const existingVendor = await vendorModel.findVendorByEmail(email);
+      const existingVendor = await Vendor.findOne({ where: { email } });
       if (existingVendor && existingVendor.id !== vendorId) {
         return sendError(
           res,
@@ -261,7 +262,18 @@ async function updateProfile(req, res) {
     }
 
     // Update vendor details in DB
-    const updatedVendor = await vendorModel.updateVendorProfile(vendorId, req.body);
+    const allowedFields = ['name', 'email', 'phone', 'shop_name', 'address', 'payment_methods', 'profile_img'];
+    const updates = {};
+    for (const field of allowedFields) {
+      if (req.body[field] !== undefined) {
+        updates[field] = req.body[field];
+      }
+    }
+
+    await Vendor.update(updates, { where: { id: vendorId } });
+    const updatedVendor = await Vendor.findByPk(vendorId, {
+      attributes: { exclude: ['password'] }
+    });
 
     // Re-generate JWTs (so details match) and set updated cookies
     const tokenPayload = {
@@ -273,7 +285,7 @@ async function updateProfile(req, res) {
     const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || (JWT_SECRET + '_refresh');
     const refreshToken = jwt.sign({ id: updatedVendor.id }, JWT_REFRESH_SECRET, { expiresIn: '7d' });
 
-    setAuthCookies(res, token, refreshToken, updatedVendor);
+    setAuthCookies(res, token, refreshToken, updatedVendor.toJSON());
 
     return sendSuccess(res, 'Profile updated successfully.', { vendor: updatedVendor });
 
@@ -292,7 +304,7 @@ async function changePassword(req, res) {
     const vendorId = req.user.id;
 
     // Fetch vendor details with password hash
-    const vendor = await vendorModel.findVendorByEmail(req.user.email);
+    const vendor = await Vendor.findByPk(vendorId);
     if (!vendor) {
       return sendError(res, 'Vendor account not found.', {}, 404);
     }
@@ -308,7 +320,7 @@ async function changePassword(req, res) {
     const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
 
     // Save updated password in DB
-    await vendorModel.updateVendorPassword(vendorId, hashedPassword);
+    await Vendor.update({ password: hashedPassword }, { where: { id: vendorId } });
 
     return sendSuccess(res, 'Password changed successfully.', {});
 
