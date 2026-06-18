@@ -86,7 +86,19 @@ async function getTransactionInvoice(req, res) {
 			return sendError(res, "Transaction not found.", {}, 404);
 		}
 
-		const doc = new PDFDocument({ margin: 50, size: "A4" });
+		const doc = new PDFDocument({
+			margin: 50,
+			size: "A4",
+			ownerPassword: process.env.PDF_OWNER_PASSWORD || "mobora_invoice_secure_owner_key_2026",
+			permissions: {
+				printing: "highResolution",
+				modifying: false,
+				copying: true,
+				annotating: false,
+				fillingForms: false,
+				documentAssembly: false
+			}
+		});
 
 		// Set headers
 		res.setHeader("Content-Type", "application/pdf");
