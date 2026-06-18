@@ -1,6 +1,7 @@
 const { Brand, Model, Storage, Ram, sequelize } = require("../../models");
 const { Op } = require("sequelize");
 const { sendSuccess, sendError } = require("../../utils/responseHelper");
+const { slugify } = require("../../utils/stringHelper");
 
 // ─────────────────────────────────────────────
 // METRICS
@@ -67,15 +68,22 @@ async function getAllSpecs(req, res) {
 			}),
 		]);
 
+		const formattedBrands = brands.map(b => ({
+			id: b.id,
+			name: b.name,
+			slug: b.slug,
+		}));
+
 		const formattedModels = models.map(m => ({
 			id: m.id,
 			name: m.name,
+			slug: m.slug,
 			brand_id: m.brand_id,
 			brand_name: m.brand ? m.brand.name : ''
 		}));
 
 		return sendSuccess(res, "All specifications retrieved.", {
-			brands,
+			brands: formattedBrands,
 			models: formattedModels,
 			storages,
 			rams,
@@ -167,6 +175,7 @@ async function createBrand(req, res) {
 
 		const brand = await Brand.create({
 			name: name.trim(),
+			slug: slugify(name),
 			status: 'pending'
 		});
 
@@ -324,6 +333,7 @@ async function createModel(req, res) {
 		const newModel = await Model.create({
 			brand_id,
 			name: name.trim(),
+			slug: slugify(name),
 			vendor_id: req.user.id
 		});
 
@@ -378,7 +388,10 @@ async function updateModel(req, res) {
 		}
 
 		const updates = {};
-		if (name !== undefined) updates.name = name.trim();
+		if (name !== undefined) {
+			updates.name = name.trim();
+			updates.slug = slugify(name);
+		}
 		if (brand_id !== undefined) updates.brand_id = brand_id;
 
 		await Model.update(updates, { where: { id } });
