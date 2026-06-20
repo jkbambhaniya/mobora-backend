@@ -44,7 +44,7 @@ module.exports = (sequelize) => {
 				unique: true,
 			},
 			condition: {
-				type: DataTypes.ENUM("Mint", "Excellent", "Good", "Fair"),
+				type: DataTypes.ENUM("NEW", "OLD"),
 				allowNull: false,
 			},
 
@@ -54,9 +54,9 @@ module.exports = (sequelize) => {
 				field: "battery_health",
 			},
 			status: {
-				type: DataTypes.ENUM("Active", "Sold", "Review"),
+				type: DataTypes.ENUM("Available", "Sold", "Review"),
 				allowNull: false,
-				defaultValue: "Active",
+				defaultValue: "Available",
 			},
 			description: {
 				type: DataTypes.TEXT,

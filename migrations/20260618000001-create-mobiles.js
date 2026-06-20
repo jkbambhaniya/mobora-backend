@@ -64,7 +64,7 @@ module.exports = {
 				unique: true,
 			},
 			condition: {
-				type: Sequelize.ENUM("Mint", "Excellent", "Good", "Fair"),
+				type: Sequelize.ENUM("NEW", "OLD"),
 				allowNull: false,
 			},
 

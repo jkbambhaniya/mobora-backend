@@ -21,7 +21,6 @@ module.exports = (sequelize) => {
             slug: {
                 type: DataTypes.STRING,
                 allowNull: true,
-                unique: true,
             },
             vendor_id: {
                 type: DataTypes.INTEGER,

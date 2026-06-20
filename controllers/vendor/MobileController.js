@@ -1,4 +1,4 @@
-const { Mobile, Brand, Model, Storage, Ram, Transaction, sequelize } = require("../../models");
+const { Mobile, Brand, Model, Storage, Ram, Transaction, Customer, sequelize } = require("../../models");
 const { Op } = require("sequelize");
 const { sendSuccess, sendError } = require("../../utils/responseHelper");
 
@@ -260,7 +260,7 @@ async function createMobile(req, res) {
 			imei: imei || null,
 			condition,
 			battery_health: battery_health !== undefined ? battery_health : null,
-			status: status || "Active",
+			status: status || "Available",
 			description: description || null,
 		}, { transaction: t });
 
@@ -305,6 +305,7 @@ async function createMobile(req, res) {
  * Update an existing mobile.
  */
 async function updateMobile(req, res) {
+	const t = await sequelize.transaction();
 	try {
 		const { id } = req.params;
 		const vendorId = req.user.id;
@@ -313,8 +314,10 @@ async function updateMobile(req, res) {
 		// Check if mobile exists and belongs to this vendor
 		const mobile = await Mobile.findOne({
 			where: { id, vendor_id: vendorId },
+			transaction: t,
 		});
 		if (!mobile) {
+			await t.rollback();
 			return sendError(res, "Mobile not found.", {}, 404);
 		}
 
@@ -322,8 +325,10 @@ async function updateMobile(req, res) {
 		if (updates.imei && updates.imei !== mobile.imei) {
 			const existing = await Mobile.findOne({
 				where: { imei: updates.imei },
+				transaction: t,
 			});
 			if (existing) {
+				await t.rollback();
 				return sendError(
 					res,
 					"A device with this IMEI is already registered in stock.",
@@ -355,7 +360,43 @@ async function updateMobile(req, res) {
 
 		await Mobile.update(filteredUpdates, {
 			where: { id, vendor_id: vendorId },
-		});
+		}, { transaction: t });
+
+		// If purchase_price is updated, update the most recent associated 'Purchase' transaction
+		if (updates.purchase_price !== undefined) {
+			const purchaseAmount = Number(updates.purchase_price);
+			const latestPurchaseTx = await Transaction.findOne({
+				where: {
+					mobile_id: id,
+					type: "Purchase",
+					vendor_id: vendorId,
+				},
+				order: [["id", "DESC"]],
+				transaction: t,
+			});
+
+			if (latestPurchaseTx) {
+				await latestPurchaseTx.update({ amount: purchaseAmount }, { transaction: t });
+
+				// Recalculate customer total spent if a customer is linked to this transaction
+				if (latestPurchaseTx.customer_id) {
+					const customerTxs = await Transaction.findAll({
+						where: { customer_id: latestPurchaseTx.customer_id },
+						transaction: t,
+					});
+					const totalSpent = customerTxs.reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
+					await Customer.update(
+						{ total_spent: totalSpent },
+						{
+							where: { id: latestPurchaseTx.customer_id },
+							transaction: t,
+						}
+					);
+				}
+			}
+		}
+
+		await t.commit();
 
 		const updated = await Mobile.findOne({
 			where: { id, vendor_id: vendorId },
@@ -372,6 +413,7 @@ async function updateMobile(req, res) {
 			mobile: formatMobile(updated),
 		});
 	} catch (error) {
+		await t.rollback();
 		console.error("[MobileController] updateMobile error:", error.message);
 		return sendError(res, "Internal server error updating mobile.", {}, 500);
 	}
@@ -418,7 +460,7 @@ async function getMetrics(req, res) {
 
 		// 2. Active Inventory units count
 		const activeStockResult = await Mobile.count({
-			where: { vendor_id: vendorId, status: "Active" },
+			where: { vendor_id: vendorId, status: "Available" },
 		});
 
 		// 3. Total units sold

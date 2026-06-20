@@ -38,7 +38,7 @@ const createMobileSchema = yup.object().shape({
 		),
 	condition: yup
 		.string()
-		.oneOf(["Mint", "Excellent", "Good", "Fair"], "Condition must be Mint, Excellent, Good, or Fair.")
+		.oneOf(["NEW", "OLD"], "Condition must be NEW or OLD.")
 		.required("Condition is required."),
 	price: yup
 		.number()
@@ -62,8 +62,8 @@ const createMobileSchema = yup.object().shape({
 		.notRequired(),
 	status: yup
 		.string()
-		.oneOf(["Active", "Sold", "Review"], "Status must be Active, Sold, or Review.")
-		.default("Active"),
+		.oneOf(["Available", "Sold", "Review"], "Status must be Available, Sold, or Review.")
+		.default("Available"),
 	description: yup
 		.string()
 		.trim()
@@ -124,7 +124,7 @@ const updateMobileSchema = yup.object().shape({
 		),
 	condition: yup
 		.string()
-		.oneOf(["Mint", "Excellent", "Good", "Fair"])
+		.oneOf(["NEW", "OLD"])
 		.nullable()
 		.notRequired(),
 	price: yup
@@ -146,7 +146,7 @@ const updateMobileSchema = yup.object().shape({
 		.notRequired(),
 	status: yup
 		.string()
-		.oneOf(["Active", "Sold", "Review"])
+		.oneOf(["Available", "Sold", "Review"])
 		.nullable()
 		.notRequired(),
 	description: yup

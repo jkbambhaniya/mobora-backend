@@ -157,6 +157,7 @@ async function getCustomer(req, res) {
 			Brand,
 			Model,
 			Storage,
+			Ram,
 		} = require("../../models");
 
 		// Fetch all transactions (Sales, Purchases, Exchanges) for this customer
@@ -174,6 +175,16 @@ async function getCustomer(req, res) {
 							as: "storage",
 							attributes: ["value"],
 						},
+						{
+							model: Ram,
+							as: "ram",
+							attributes: ["value"],
+						},
+						{
+							model: Transaction,
+							as: "transactions",
+							attributes: ["id", "type", "amount"],
+						},
 					],
 				},
 			],
@@ -185,6 +196,7 @@ async function getCustomer(req, res) {
 
 		let totalOrders = 0;
 		let totalSpent = 0;
+		let totalProfit = 0;
 
 		const purchases = transactions.map((tx) => {
 			const deviceName = tx.mobile
@@ -194,6 +206,21 @@ async function getCustomer(req, res) {
 			totalOrders += 1;
 			totalSpent += Number(tx.amount || 0);
 
+			// Calculate profit for this transaction
+			if (tx.mobile) {
+				const mobileTxs = tx.mobile.transactions || [];
+				if (tx.type === "Sale") {
+					const purchaseTx = mobileTxs.find((mTx) => mTx.type === "Purchase");
+					const cost = purchaseTx ? Number(purchaseTx.amount) : 0;
+					totalProfit += Number(tx.amount) - cost;
+				} else if (tx.type === "Purchase") {
+					const saleTx = mobileTxs.find((mTx) => mTx.type === "Sale");
+					if (saleTx) {
+						totalProfit += Number(saleTx.amount) - Number(tx.amount);
+					}
+				}
+			}
+
 			return {
 				id: tx.id.toString(),
 				device: deviceName,
@@ -201,6 +228,12 @@ async function getCustomer(req, res) {
 				type: tx.type, // 'Sale', 'Purchase', 'Exchange'
 				amount: tx.amount,
 				status: "Delivered",
+				imei: tx.mobile ? tx.mobile.imei : null,
+				color: tx.mobile ? tx.mobile.color : null,
+				ram: tx.mobile && tx.mobile.ram ? tx.mobile.ram.value : null,
+				storage: tx.mobile && tx.mobile.storage ? tx.mobile.storage.value : null,
+				condition: tx.mobile ? tx.mobile.condition : null,
+				batteryHealth: tx.mobile ? tx.mobile.battery_health : null,
 			};
 		});
 
@@ -218,6 +251,7 @@ async function getCustomer(req, res) {
 			status: customer.status,
 			totalOrders,
 			totalSpent,
+			totalProfit,
 			joinedDate: customer.joined_date,
 			address: customer.address || "",
 			profileImg: customer.profile_img || null,

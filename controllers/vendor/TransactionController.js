@@ -6,8 +6,14 @@ const { sendSuccess, sendError } = require("../../utils/responseHelper");
  * Format database record to API response shape compatible with frontend TradeTransaction.
  */
 function formatTransaction(tx) {
+	const txs = tx.mobile && tx.mobile.transactions ? tx.mobile.transactions : [];
+	const purchaseTx = txs.find(t => t.type === "Purchase");
+	const purchasePrice = purchaseTx ? purchaseTx.amount : undefined;
+
 	return {
 		id: tx.id.toString(),
+		mobileId: tx.mobile_id,
+		purchasePrice: purchasePrice,
 		imei: tx.mobile ? tx.mobile.imei : "N/A",
 		deviceBrand: tx.mobile && tx.mobile.brand ? tx.mobile.brand.name : "N/A",
 		deviceModel: tx.mobile && tx.mobile.model ? tx.mobile.model.name : "N/A",
@@ -49,6 +55,7 @@ async function getTransactions(req, res) {
 					{ model: Model, as: "model", attributes: ["name"] },
 					{ model: Storage, as: "storage", attributes: ["value"] },
 					{ model: Ram, as: "ram", attributes: ["value"] },
+					{ model: Transaction, as: "transactions", attributes: ["type", "amount"] },
 				],
 			},
 			{
@@ -186,9 +193,9 @@ async function createTransaction(req, res) {
 				ram_id: ramObj.id,
 				color: color || "Space Gray",
 				imei: imei || null,
-				condition: condition || "Excellent",
+				condition: condition || "NEW",
 				battery_health: battery_health !== undefined ? battery_health : 90,
-				status: "Active",
+				status: "Available",
 				description: notes || `Acquired via ${type}.`
 			}, { transaction: t });
 		}
@@ -223,7 +230,7 @@ async function createTransaction(req, res) {
 			// Buyback reactivation or new stock acquisition
 			await mobile.update(
 				{
-					status: "Active",
+					status: "Available",
 					condition: condition || mobile.condition,
 					battery_health: battery_health !== undefined ? battery_health : mobile.battery_health,
 					description: notes || `Re-acquired via buyback.`,
@@ -287,6 +294,7 @@ async function createTransaction(req, res) {
 						{ model: Model, as: "model", attributes: ["name"] },
 						{ model: Storage, as: "storage", attributes: ["value"] },
 						{ model: Ram, as: "ram", attributes: ["value"] },
+						{ model: Transaction, as: "transactions", attributes: ["type", "amount"] },
 					],
 				},
 				{
