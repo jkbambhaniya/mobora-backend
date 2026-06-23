@@ -86,6 +86,17 @@ const updateProfileSchema = yup.object().shape({
   profile_img: yup
     .string()
     .nullable()
+    .notRequired(),
+  gst_enabled: yup
+    .boolean()
+    .nullable()
+    .notRequired(),
+  gst_rate: yup
+    .number()
+    .integer()
+    .min(0)
+    .max(100)
+    .nullable()
     .notRequired()
 });
 

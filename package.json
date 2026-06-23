@@ -7,7 +7,7 @@
     "start": "node index.js",
     "dev": "node index.js",
     "db:migrate": "npx sequelize-cli db:migrate",
-    "db:migrate:fresh": "npx sequelize-cli db:migrate:undo:all && npx sequelize-cli db:migrate",
+    "db:migrate:fresh": "node -e \"const { sequelize } = require('./config/db'); sequelize.query('SET FOREIGN_KEY_CHECKS = 0').then(() => sequelize.query('DROP TABLE IF EXISTS business_details, repairs')).catch(err => {}).finally(() => process.exit(0))\" && npx sequelize-cli db:migrate:undo:all && npx sequelize-cli db:migrate",
     "db:seed": "npx sequelize-cli db:seed:all",
     "test": "echo \"Error: no test specified\" && exit 1"
   },

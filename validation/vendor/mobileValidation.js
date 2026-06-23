@@ -70,16 +70,14 @@ const createMobileSchema = yup.object().shape({
 		.nullable()
 		.notRequired(),
 	customer_id: yup
-		.number()
-		.integer()
+		.mixed()
 		.nullable()
 		.notRequired(),
 });
 
 const updateMobileSchema = yup.object().shape({
 	customer_id: yup
-		.number()
-		.integer()
+		.mixed()
 		.nullable()
 		.notRequired(),
 	brand_id: yup

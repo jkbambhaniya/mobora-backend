@@ -14,10 +14,16 @@ module.exports = (sequelize) => {
 				allowNull: false,
 				field: "vendor_id",
 			},
-			customer_id: {
+			partner_id: {
 				type: DataTypes.INTEGER,
 				allowNull: true,
-				field: "customer_id",
+				field: "partner_id",
+			},
+			partner_type: {
+				type: DataTypes.ENUM("Customer", "Vendor"),
+				allowNull: false,
+				defaultValue: "Customer",
+				field: "partner_type",
 			},
 			mobile_id: {
 				type: DataTypes.INTEGER,

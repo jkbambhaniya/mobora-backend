@@ -194,6 +194,11 @@ async function getCustomer(req, res) {
 			],
 		});
 
+		const { BusinessDetail } = require("../../models");
+		const detailObj = await BusinessDetail.findOne({ where: { vendor_id: vendorId } });
+		const gstEnabled = detailObj ? detailObj.gst_enabled : true;
+		const gstRate = detailObj ? detailObj.gst_rate : 18;
+
 		let totalOrders = 0;
 		let totalSpent = 0;
 		let totalProfit = 0;
@@ -212,11 +217,15 @@ async function getCustomer(req, res) {
 				if (tx.type === "Sale") {
 					const purchaseTx = mobileTxs.find((mTx) => mTx.type === "Purchase");
 					const cost = purchaseTx ? Number(purchaseTx.amount) : 0;
-					totalProfit += Number(tx.amount) - cost;
+					const margin = Number(tx.amount) - cost;
+					const gstAmount = (gstEnabled && margin > 0) ? Math.round(margin - (margin / (1 + (gstRate / 100)))) : 0;
+					totalProfit += margin - gstAmount;
 				} else if (tx.type === "Purchase") {
 					const saleTx = mobileTxs.find((mTx) => mTx.type === "Sale");
 					if (saleTx) {
-						totalProfit += Number(saleTx.amount) - Number(tx.amount);
+						const margin = Number(saleTx.amount) - Number(tx.amount);
+						const gstAmount = (gstEnabled && margin > 0) ? Math.round(margin - (margin / (1 + (gstRate / 100)))) : 0;
+						totalProfit += margin - gstAmount;
 					}
 				}
 			}

@@ -266,9 +266,17 @@ async function createMobile(req, res) {
 
 		// Create corresponding Purchase transaction
 		const purchaseAmount = purchase_price ? Number(purchase_price) : 0;
+		let pId = customer_id;
+		let pType = "Customer";
+		if (typeof customer_id === "string" && customer_id.includes(":")) {
+			const [type, val] = customer_id.split(":");
+			pId = isNaN(Number(val)) ? null : Number(val);
+			pType = type;
+		}
 		await Transaction.create({
 			vendor_id: vendorId,
-			customer_id: customer_id ? Number(customer_id) : null,
+			partner_id: pId ? Number(pId) : null,
+			partner_type: pType,
 			mobile_id: newMobile.id,
 			type: "Purchase",
 			amount: purchaseAmount,

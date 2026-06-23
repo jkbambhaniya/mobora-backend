@@ -1,5 +1,6 @@
-const { Transaction, Mobile, Customer, Brand, Model, Storage, Ram, Vendor } = require("../../models");
+const { Transaction, Mobile, Customer, Brand, Model, Storage, Ram, Vendor, BusinessDetail } = require("../../models");
 const { sendError } = require("../../utils/responseHelper");
+const { calculateMarginGst } = require("../../utils/gstHelper");
 const PDFDocument = require("pdfkit");
 
 /**
@@ -67,6 +68,7 @@ async function getTransactionInvoice(req, res) {
 						{ model: Model, as: "model", attributes: ["name"] },
 						{ model: Storage, as: "storage", attributes: ["value"] },
 						{ model: Ram, as: "ram", attributes: ["value"] },
+						{ model: Transaction, as: "transactions", attributes: ["type", "amount"] },
 					],
 				},
 				{
@@ -76,8 +78,23 @@ async function getTransactionInvoice(req, res) {
 				},
 				{
 					model: Vendor,
+					as: "partnerVendor",
+					attributes: ["name", "email"],
+					include: [{
+						model: BusinessDetail,
+						as: "businessDetail",
+						attributes: ["phone", "shop_name", "address"],
+					}],
+				},
+				{
+					model: Vendor,
 					as: "vendor",
-					attributes: ["name", "email", "phone", "shop_name", "address"],
+					attributes: ["name", "email"],
+					include: [{
+						model: BusinessDetail,
+						as: "businessDetail",
+						attributes: ["shop_name", "phone", "address", "gst_enabled", "gst_rate"],
+					}],
 				},
 			],
 		});
@@ -119,10 +136,10 @@ async function getTransactionInvoice(req, res) {
 		// Draw Header Banner
 		doc.rect(0, 0, 595.28, 110).fill(primaryColor);
 		
-		const shopName = tx.vendor ? (tx.vendor.shop_name || tx.vendor.name) : "Mobora Store";
-		const vendorPhone = tx.vendor ? (tx.vendor.phone || "N/A") : "N/A";
+		const shopName = (tx.vendor && tx.vendor.businessDetail) ? (tx.vendor.businessDetail.shop_name || tx.vendor.name) : (tx.vendor ? tx.vendor.name : "Mobora Store");
+		const vendorPhone = (tx.vendor && tx.vendor.businessDetail) ? (tx.vendor.businessDetail.phone || "N/A") : "N/A";
 		const vendorEmail = tx.vendor ? tx.vendor.email : "N/A";
-		const vendorAddress = tx.vendor ? (tx.vendor.address || "N/A") : "N/A";
+		const vendorAddress = (tx.vendor && tx.vendor.businessDetail) ? (tx.vendor.businessDetail.address || "N/A") : "N/A";
 
 		doc.fillColor("#ffffff")
 			.fontSize(22)
@@ -149,10 +166,26 @@ async function getTransactionInvoice(req, res) {
 
 		// Customer Section
 		doc.fontSize(10).font("Helvetica-Bold").text("BILL TO / CLIENT", 50, startY);
-		const custName = tx.customer ? tx.customer.name : "Walk-in Customer";
-		const custPhone = tx.customer ? tx.customer.phone : "N/A";
-		const custEmail = tx.customer ? (tx.customer.email || "N/A") : "N/A";
-		const custAddress = tx.customer ? (tx.customer.address || "Store Walk-in Customer") : "N/A";
+		
+		let custName = "Walk-in Customer";
+		let custPhone = "N/A";
+		let custEmail = "N/A";
+		let custAddress = "N/A";
+
+		if (tx.partner_type === "Customer" && tx.customer) {
+			custName = tx.customer.name;
+			custPhone = tx.customer.phone || "N/A";
+			custEmail = tx.customer.email || "N/A";
+			custAddress = tx.customer.address || "Store Walk-in Customer";
+		} else if (tx.partner_type === "Vendor" && tx.partnerVendor) {
+			const bDetail = tx.partnerVendor.businessDetail;
+			custName = bDetail && bDetail.shop_name 
+				? `${bDetail.shop_name} (${tx.partnerVendor.name})` 
+				: tx.partnerVendor.name;
+			custPhone = bDetail && bDetail.phone ? bDetail.phone : "N/A";
+			custEmail = tx.partnerVendor.email || "N/A";
+			custAddress = bDetail && bDetail.address ? bDetail.address : "Registered Vendor Partner";
+		}
 
 		doc.fontSize(9.5).font("Helvetica").text(custName, 50, startY + 16);
 		doc.text(`Phone: ${custPhone}`, 50, startY + 29);
@@ -211,19 +244,62 @@ async function getTransactionInvoice(req, res) {
 		const totalY = itemY + 63;
 		doc.strokeColor("#e5e7eb").lineWidth(1).moveTo(320, totalY).lineTo(545, totalY).stroke();
 
-		doc.font("Helvetica-Bold").fontSize(9.5)
-			.text("Subtotal:", 350, totalY + 8)
-			.text(`INR ${Number(tx.amount).toLocaleString("en-IN")}.00`, 450, totalY + 8, { align: "right", width: 85 });
+		let currentTotalsY = totalY + 8;
+		const subtotalVal = Number(tx.amount);
+		
+		const mobileTxs = tx.mobile && tx.mobile.transactions ? tx.mobile.transactions : [];
+		const purchaseTx = mobileTxs.find(t => t.type === "Purchase");
+		const purchasePrice = purchaseTx ? Number(purchaseTx.amount) : undefined;
+		
+		const gstEnabled = tx.vendor ? tx.vendor.gst_enabled : true;
+		const gstRate = tx.vendor ? tx.vendor.gst_rate : 18;
+		const gstCalc = calculateMarginGst(subtotalVal, purchasePrice, tx.type, gstEnabled, gstRate);
+		const isSale = tx.type === "Sale";
 
-		doc.text("Total Amount:", 350, totalY + 22)
+		doc.font("Helvetica-Bold").fontSize(9)
+			.fillColor(textColor)
+			.text("Subtotal:", 350, currentTotalsY)
+			.font("Helvetica")
+			.text(`INR ${subtotalVal.toLocaleString("en-IN")}.00`, 450, currentTotalsY, { align: "right", width: 85 });
+
+		if (isSale && gstEnabled && gstCalc.margin > 0) {
+			currentTotalsY += 14;
+			doc.font("Helvetica-Bold").fontSize(9)
+				.text("Taxable Value:", 350, currentTotalsY)
+				.font("Helvetica")
+				.text(`INR ${gstCalc.taxableValue.toLocaleString("en-IN")}.00`, 450, currentTotalsY, { align: "right", width: 85 });
+
+			currentTotalsY += 14;
+			doc.font("Helvetica-Bold").fontSize(9)
+				.text(`CGST (${gstCalc.gstHalfRate}% on Margin):`, 350, currentTotalsY)
+				.font("Helvetica")
+				.text(`INR ${gstCalc.cgst.toLocaleString("en-IN")}.00`, 450, currentTotalsY, { align: "right", width: 85 });
+
+			currentTotalsY += 14;
+			doc.font("Helvetica-Bold").fontSize(9)
+				.text(`SGST (${gstCalc.gstHalfRate}% on Margin):`, 350, currentTotalsY)
+				.font("Helvetica")
+				.text(`INR ${gstCalc.sgst.toLocaleString("en-IN")}.00`, 450, currentTotalsY, { align: "right", width: 85 });
+		}
+
+		currentTotalsY += 16;
+		doc.font("Helvetica-Bold").fontSize(10)
 			.fillColor(primaryColor)
-			.text(`INR ${Number(tx.amount).toLocaleString("en-IN")}.00`, 450, totalY + 22, { align: "right", width: 85 });
+			.text("Total Amount:", 350, currentTotalsY)
+			.text(`INR ${subtotalVal.toLocaleString("en-IN")}.00`, 450, currentTotalsY, { align: "right", width: 85 });
 
 		// Notes & Terms
-		const notesY = totalY + 60;
+		const notesY = currentTotalsY + 45;
 		doc.fillColor(textColor).font("Helvetica-Bold").fontSize(9.5).text("Notes:", 50, notesY);
+		
+		let customNotes = tx.notes || "";
+		if (isSale && gstEnabled && gstCalc.margin > 0) {
+			const gstNote = "Invoice processed under GST Margin Scheme (Rule 32(5) of CGST Rules, 2017). GST charged only on the profit margin of pre-owned goods.";
+			customNotes = customNotes ? `${customNotes}\n\n* ${gstNote}` : `* ${gstNote}`;
+		}
+		
 		doc.font("Helvetica").fontSize(8.5).fillColor(darkGray)
-			.text(tx.notes || "No extra notes recorded for this transaction.", 50, notesY + 13, { width: 495 });
+			.text(customNotes || "No extra notes recorded for this transaction.", 50, notesY + 13, { width: 495 });
 
 		doc.font("Helvetica-Bold").fontSize(9.5).text("Terms & Conditions:", 50, notesY + 50);
 		doc.font("Helvetica").fontSize(7.5).fillColor(darkGray)

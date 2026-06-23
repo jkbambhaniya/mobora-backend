@@ -1,6 +1,6 @@
 const fs = require("fs");
 const path = require("path");
-const { ChatSession, Message, Vendor, sequelize } = require("../../models");
+const { ChatSession, Message, Vendor, BusinessDetail, sequelize } = require("../../models");
 const { Op } = require("sequelize");
 const socketHandler = require("../../utils/socketHandler");
 const { sendSuccess, sendError } = require("../../utils/responseHelper");
@@ -671,12 +671,30 @@ async function getVendors(req, res) {
 				id: { [Op.ne]: currentVendorId },
 				status: "approved",
 			},
-			attributes: ["id", "name", "email", "shop_name", "profile_img"],
+			attributes: ["id", "name", "email", "profile_img"],
+			include: [
+				{
+					model: BusinessDetail,
+					as: "businessDetail",
+					attributes: ["shop_name"],
+				},
+			],
 			order: [["name", "ASC"]],
 		});
 
+		const formattedVendors = vendors.map((v) => {
+			const json = v.toJSON();
+			return {
+				id: json.id,
+				name: json.name,
+				email: json.email,
+				profile_img: json.profile_img,
+				shop_name: json.businessDetail ? json.businessDetail.shop_name : null,
+			};
+		});
+
 		return sendSuccess(res, "Other vendors retrieved successfully.", {
-			vendors,
+			vendors: formattedVendors,
 		});
 	} catch (error) {
 		console.error("[ChatController] getVendors error:", error.message);

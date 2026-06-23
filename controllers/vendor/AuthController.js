@@ -1,6 +1,6 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const { Vendor } = require("../../models");
+const { Vendor, BusinessDetail } = require("../../models");
 const { sendSuccess, sendError } = require("../../utils/responseHelper");
 const {
 	registerSchema,
@@ -61,6 +61,17 @@ async function register(req, res) {
 			status,
 		});
 
+		// Create default business details record
+		await BusinessDetail.create({
+			vendor_id: newVendor.id,
+			shop_name: trimmedName + " Store",
+			phone: "",
+			address: "",
+			payment_methods: "Cash, UPI",
+			gst_enabled: true,
+			gst_rate: 18,
+		});
+
 		return sendSuccess(
 			res,
 			status === "approved"
@@ -97,7 +108,10 @@ async function login(req, res) {
 		const trimmedEmail = email.trim().toLowerCase();
 
 		// 1. Fetch vendor by email
-		const vendor = await Vendor.findOne({ where: { email: trimmedEmail } });
+		const vendor = await Vendor.findOne({
+			where: { email: trimmedEmail },
+			include: [{ model: BusinessDetail, as: "businessDetail" }],
+		});
 		if (!vendor) {
 			return sendError(res, "Invalid email or password.", {}, 401);
 		}
@@ -132,6 +146,8 @@ async function login(req, res) {
 			id: vendor.id,
 			email: vendor.email,
 			role: "vendor",
+			gstEnabled: vendor.businessDetail ? vendor.businessDetail.gst_enabled : true,
+			gstRate: vendor.businessDetail ? vendor.businessDetail.gst_rate : 18,
 		};
 
 		const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: "15m" });
@@ -147,6 +163,12 @@ async function login(req, res) {
 			name: vendor.name,
 			email: vendor.email,
 			status: vendor.status,
+			shop_name: vendor.businessDetail ? vendor.businessDetail.shop_name : "",
+			phone: vendor.businessDetail ? vendor.businessDetail.phone : "",
+			address: vendor.businessDetail ? vendor.businessDetail.address : "",
+			payment_methods: vendor.businessDetail ? vendor.businessDetail.payment_methods : "",
+			gst_enabled: vendor.businessDetail ? vendor.businessDetail.gst_enabled : true,
+			gst_rate: vendor.businessDetail ? vendor.businessDetail.gst_rate : 18,
 		};
 
 		// 5. Encrypt tokens and set secure cookies
@@ -178,6 +200,7 @@ async function login(req, res) {
 async function getProfile(req, res) {
 	try {
 		const vendor = await Vendor.findByPk(req.user.id, {
+			include: [{ model: BusinessDetail, as: "businessDetail" }],
 			attributes: { exclude: ["password"] },
 		});
 
@@ -185,7 +208,25 @@ async function getProfile(req, res) {
 			return sendError(res, "Vendor profile not found.", {}, 444);
 		}
 
-		return sendSuccess(res, "Profile retrieved successfully.", { vendor });
+		// Flatten businessDetail attributes into vendor root for backward compatibility
+		const formatted = vendor.toJSON();
+		if (formatted.businessDetail) {
+			formatted.shop_name = formatted.businessDetail.shop_name;
+			formatted.phone = formatted.businessDetail.phone;
+			formatted.address = formatted.businessDetail.address;
+			formatted.payment_methods = formatted.businessDetail.payment_methods;
+			formatted.gst_enabled = formatted.businessDetail.gst_enabled;
+			formatted.gst_rate = formatted.businessDetail.gst_rate;
+		} else {
+			formatted.shop_name = "";
+			formatted.phone = "";
+			formatted.address = "";
+			formatted.payment_methods = "";
+			formatted.gst_enabled = true;
+			formatted.gst_rate = 18;
+		}
+
+		return sendSuccess(res, "Profile retrieved successfully.", { vendor: formatted });
 	} catch (error) {
 		console.error("[Vendor Auth] Profile fetch error:", error.message);
 		return sendError(
@@ -268,7 +309,9 @@ async function refresh(req, res) {
 		}
 
 		// Fetch vendor details to verify they still exist and status is approved
-		const vendor = await Vendor.findByPk(decoded.id);
+		const vendor = await Vendor.findByPk(decoded.id, {
+			include: [{ model: BusinessDetail, as: "businessDetail" }],
+		});
 		if (!vendor) {
 			return sendError(res, "Vendor profile not found.", {}, 404);
 		}
@@ -282,6 +325,8 @@ async function refresh(req, res) {
 			id: vendor.id,
 			email: vendor.email,
 			role: "vendor",
+			gstEnabled: vendor.businessDetail ? vendor.businessDetail.gst_enabled : true,
+			gstRate: vendor.businessDetail ? vendor.businessDetail.gst_rate : 18,
 		};
 
 		const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: "15m" });
@@ -337,25 +382,42 @@ async function updateProfile(req, res) {
 			}
 		}
 
-		// Update vendor details in DB
-		const allowedFields = [
-			"name",
-			"email",
-			"phone",
-			"shop_name",
-			"address",
-			"payment_methods",
-			"profile_img",
-		];
-		const updates = {};
-		for (const field of allowedFields) {
+		// Update vendor fields in DB
+		const vendorFields = ["name", "email", "profile_img"];
+		const vendorUpdates = {};
+		for (const field of vendorFields) {
 			if (req.body[field] !== undefined) {
-				updates[field] = req.body[field];
+				vendorUpdates[field] = req.body[field];
 			}
 		}
 
-		await Vendor.update(updates, { where: { id: vendorId } });
+		if (Object.keys(vendorUpdates).length > 0) {
+			await Vendor.update(vendorUpdates, { where: { id: vendorId } });
+		}
+
+		// Update business details fields in DB
+		const businessFields = ["phone", "shop_name", "address", "payment_methods", "gst_enabled", "gst_rate"];
+		const businessUpdates = {};
+		for (const field of businessFields) {
+			if (req.body[field] !== undefined) {
+				businessUpdates[field] = req.body[field];
+			}
+		}
+
+		if (Object.keys(businessUpdates).length > 0) {
+			const existingDetail = await BusinessDetail.findOne({ where: { vendor_id: vendorId } });
+			if (existingDetail) {
+				await existingDetail.update(businessUpdates);
+			} else {
+				await BusinessDetail.create({
+					vendor_id: vendorId,
+					...businessUpdates
+				});
+			}
+		}
+
 		const updatedVendor = await Vendor.findByPk(vendorId, {
+			include: [{ model: BusinessDetail, as: "businessDetail" }],
 			attributes: { exclude: ["password"] },
 		});
 
@@ -364,6 +426,8 @@ async function updateProfile(req, res) {
 			id: updatedVendor.id,
 			email: updatedVendor.email,
 			role: "vendor",
+			gstEnabled: updatedVendor.businessDetail ? updatedVendor.businessDetail.gst_enabled : true,
+			gstRate: updatedVendor.businessDetail ? updatedVendor.businessDetail.gst_rate : 18,
 		};
 		const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: "15m" });
 		const JWT_REFRESH_SECRET =
@@ -374,10 +438,20 @@ async function updateProfile(req, res) {
 			{ expiresIn: "7d" },
 		);
 
-		setAuthCookies(res, token, refreshToken, updatedVendor.toJSON());
+		const formattedVendor = updatedVendor.toJSON();
+		if (formattedVendor.businessDetail) {
+			formattedVendor.shop_name = formattedVendor.businessDetail.shop_name;
+			formattedVendor.phone = formattedVendor.businessDetail.phone;
+			formattedVendor.address = formattedVendor.businessDetail.address;
+			formattedVendor.payment_methods = formattedVendor.businessDetail.payment_methods;
+			formattedVendor.gst_enabled = formattedVendor.businessDetail.gst_enabled;
+			formattedVendor.gst_rate = formattedVendor.businessDetail.gst_rate;
+		}
+
+		setAuthCookies(res, token, refreshToken, formattedVendor);
 
 		return sendSuccess(res, "Profile updated successfully.", {
-			vendor: updatedVendor,
+			vendor: formattedVendor,
 		});
 	} catch (error) {
 		console.error("[Vendor Auth] Profile update error:", error.message);

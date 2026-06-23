@@ -1,6 +1,7 @@
-const { Transaction, Mobile, Customer, Brand, Model, Storage, Ram, sequelize } = require("../../models");
+const { Transaction, Mobile, Customer, Brand, Model, Storage, Ram, Vendor, BusinessDetail, sequelize } = require("../../models");
 const { Op } = require("sequelize");
 const { sendSuccess, sendError } = require("../../utils/responseHelper");
+const { calculateMarginGst } = require("../../utils/gstHelper");
 
 /**
  * Format database record to API response shape compatible with frontend TradeTransaction.
@@ -9,6 +10,21 @@ function formatTransaction(tx) {
 	const txs = tx.mobile && tx.mobile.transactions ? tx.mobile.transactions : [];
 	const purchaseTx = txs.find(t => t.type === "Purchase");
 	const purchasePrice = purchaseTx ? purchaseTx.amount : undefined;
+
+	const gstEnabled = (tx.vendor && tx.vendor.businessDetail) ? tx.vendor.businessDetail.gst_enabled : true;
+	const gstRate = (tx.vendor && tx.vendor.businessDetail) ? tx.vendor.businessDetail.gst_rate : 18;
+	const gstCalc = calculateMarginGst(tx.amount, purchasePrice, tx.type, gstEnabled, gstRate);
+
+	let partnerName = "Walk-in Customer";
+	if (tx.partner_type === "Customer" && tx.customer) {
+		partnerName = tx.customer.name;
+	} else if (tx.partner_type === "Vendor" && tx.partnerVendor) {
+		const bDetail = tx.partnerVendor.businessDetail;
+		const shopName = bDetail ? bDetail.shop_name : null;
+		partnerName = shopName 
+			? `${shopName} (${tx.partnerVendor.name})` 
+			: tx.partnerVendor.name;
+	}
 
 	return {
 		id: tx.id.toString(),
@@ -23,11 +39,19 @@ function formatTransaction(tx) {
 		condition: tx.mobile ? tx.mobile.condition : undefined,
 		batteryHealth: tx.mobile ? tx.mobile.battery_health : undefined,
 		type: tx.type,
-		customerName: tx.customer ? tx.customer.name : "Walk-in Customer",
+		customerName: partnerName,
+		partnerId: tx.partner_id,
+		partnerType: tx.partner_type,
 		amount: tx.amount,
 		date: tx.date,
 		notes: tx.notes || "",
 		createdAt: tx.created_at,
+		gstRate: gstCalc.gstRate,
+		gstAmount: gstCalc.gstAmount,
+		cgst: gstCalc.cgst,
+		sgst: gstCalc.sgst,
+		taxableValue: gstCalc.taxableValue,
+		margin: gstCalc.margin,
 	};
 }
 
@@ -63,6 +87,26 @@ async function getTransactions(req, res) {
 				as: "customer",
 				attributes: ["name", "phone"],
 			},
+			{
+				model: Vendor,
+				as: "partnerVendor",
+				attributes: ["name"],
+				include: [{
+					model: BusinessDetail,
+					as: "businessDetail",
+					attributes: ["phone", "shop_name"],
+				}],
+			},
+			{
+				model: Vendor,
+				as: "vendor",
+				attributes: ["id"],
+				include: [{
+					model: BusinessDetail,
+					as: "businessDetail",
+					attributes: ["gst_enabled", "gst_rate"],
+				}],
+			},
 		];
 
 		if (search) {
@@ -72,6 +116,8 @@ async function getTransactions(req, res) {
 					[Op.or]: [
 						{ "$mobile.imei$": { [Op.like]: searchQuery } },
 						{ "$customer.name$": { [Op.like]: searchQuery } },
+						{ "$partnerVendor.name$": { [Op.like]: searchQuery } },
+						{ "$partnerVendor.shop_name$": { [Op.like]: searchQuery } },
 						{ "$mobile.brand.name$": { [Op.like]: searchQuery } },
 						{ "$mobile.model.name$": { [Op.like]: searchQuery } },
 						{ notes: { [Op.like]: searchQuery } },
@@ -123,6 +169,8 @@ async function createTransaction(req, res) {
 		const vendorId = req.user.id;
 		const {
 			mobile_id,
+			partner_id,
+			partner_type = "Customer",
 			customer_id,
 			customer_name,
 			type,
@@ -205,15 +253,28 @@ async function createTransaction(req, res) {
 			return sendError(res, "Mobile listing not found.", {}, 404);
 		}
 
-		// 2. Resolve Customer ID
-		let resolvedCustomerId = customer_id;
-		if (!resolvedCustomerId && customer_name) {
-			const customer = await Customer.findOne({
-				where: { name: customer_name, vendor_id: vendorId },
-				transaction: t,
-			});
-			if (customer) {
-				resolvedCustomerId = customer.id;
+		// 2. Resolve Partner ID and Partner Type
+		let resolvedPartnerId = partner_id || customer_id;
+		let resolvedPartnerType = partner_type;
+
+		if (!resolvedPartnerId && customer_name) {
+			if (resolvedPartnerType === "Vendor") {
+				const vend = await Vendor.findOne({
+					where: { name: customer_name },
+					transaction: t
+				});
+				if (vend) {
+					resolvedPartnerId = vend.id;
+				}
+			} else {
+				const customer = await Customer.findOne({
+					where: { name: customer_name, vendor_id: vendorId },
+					transaction: t,
+				});
+				if (customer) {
+					resolvedPartnerId = customer.id;
+					resolvedPartnerType = "Customer";
+				}
 			}
 		}
 
@@ -222,7 +283,7 @@ async function createTransaction(req, res) {
 			await mobile.update(
 				{
 					status: "Sold",
-					description: notes || `Sold to customer.`,
+					description: notes || `Sold to partner.`,
 				},
 				{ transaction: t },
 			);
@@ -243,7 +304,8 @@ async function createTransaction(req, res) {
 		const newTransaction = await Transaction.create(
 			{
 				vendor_id: vendorId,
-				customer_id: resolvedCustomerId || null,
+				partner_id: resolvedPartnerId || null,
+				partner_type: resolvedPartnerType || "Customer",
 				mobile_id: mobile.id,
 				type,
 				amount,
@@ -254,9 +316,9 @@ async function createTransaction(req, res) {
 		);
 
 		// Recalculate customer total orders and total spent if a customer is linked
-		if (resolvedCustomerId) {
+		if (resolvedPartnerType === "Customer" && resolvedPartnerId) {
 			const customerTxs = await Transaction.findAll({
-				where: { customer_id: resolvedCustomerId },
+				where: { partner_id: resolvedPartnerId, partner_type: "Customer" },
 				transaction: t,
 			});
 			let newTxsList = [...customerTxs];
@@ -277,7 +339,7 @@ async function createTransaction(req, res) {
 
 			await Customer.update(
 				{ total_orders: totalOrders, total_spent: totalSpent },
-				{ where: { id: resolvedCustomerId }, transaction: t }
+				{ where: { id: resolvedPartnerId }, transaction: t }
 			);
 		}
 
@@ -301,6 +363,26 @@ async function createTransaction(req, res) {
 					model: Customer,
 					as: "customer",
 					attributes: ["name", "phone"],
+				},
+				{
+					model: Vendor,
+					as: "partnerVendor",
+					attributes: ["name"],
+					include: [{
+						model: BusinessDetail,
+						as: "businessDetail",
+						attributes: ["phone", "shop_name"],
+					}],
+				},
+				{
+					model: Vendor,
+					as: "vendor",
+					attributes: ["id"],
+					include: [{
+						model: BusinessDetail,
+						as: "businessDetail",
+						attributes: ["gst_enabled", "gst_rate"],
+					}],
 				},
 			],
 		});

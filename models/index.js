@@ -10,6 +10,8 @@ const MessageModel = require('./Message');
 const NotificationModel = require('./Notification');
 const MobileModel = require('./Mobile');
 const TransactionModel = require('./Transaction');
+const RepairModel = require('./Repair');
+const BusinessDetailModel = require('./BusinessDetail');
 
 const Vendor = VendorModel(sequelize);
 const Customer = CustomerModel(sequelize);
@@ -22,8 +24,15 @@ const Message = MessageModel(sequelize);
 const Notification = NotificationModel(sequelize);
 const Mobile = MobileModel(sequelize);
 const Transaction = TransactionModel(sequelize);
+const Repair = RepairModel(sequelize);
+const BusinessDetail = BusinessDetailModel(sequelize);
 
 // Define associations
+Vendor.hasOne(BusinessDetail, { foreignKey: 'vendor_id', as: 'businessDetail', onDelete: 'CASCADE' });
+BusinessDetail.belongsTo(Vendor, { foreignKey: 'vendor_id', as: 'vendor' });
+
+Vendor.hasMany(Repair, { foreignKey: 'vendor_id', as: 'repairs', onDelete: 'CASCADE' });
+Repair.belongsTo(Vendor, { foreignKey: 'vendor_id', as: 'vendor' });
 Vendor.hasMany(Customer, { foreignKey: 'vendor_id', as: 'customers', onDelete: 'CASCADE' });
 Customer.belongsTo(Vendor, { foreignKey: 'vendor_id', as: 'vendor' });
 
@@ -65,8 +74,12 @@ Mobile.belongsTo(Ram, { foreignKey: 'ram_id', as: 'ram' });
 Vendor.hasMany(Transaction, { foreignKey: 'vendor_id', as: 'transactions', onDelete: 'CASCADE' });
 Transaction.belongsTo(Vendor, { foreignKey: 'vendor_id', as: 'vendor' });
 
-Customer.hasMany(Transaction, { foreignKey: 'customer_id', as: 'transactions', onDelete: 'SET NULL' });
-Transaction.belongsTo(Customer, { foreignKey: 'customer_id', as: 'customer' });
+// Polymorphic Partner associations
+Customer.hasMany(Transaction, { foreignKey: 'partner_id', constraints: false, scope: { partner_type: 'Customer' }, as: 'transactions' });
+Transaction.belongsTo(Customer, { foreignKey: 'partner_id', constraints: false, as: 'customer' });
+
+Vendor.hasMany(Transaction, { foreignKey: 'partner_id', constraints: false, scope: { partner_type: 'Vendor' }, as: 'partnerTransactions' });
+Transaction.belongsTo(Vendor, { foreignKey: 'partner_id', constraints: false, as: 'partnerVendor' });
 
 Mobile.hasMany(Transaction, { foreignKey: 'mobile_id', as: 'transactions', onDelete: 'CASCADE' });
 Transaction.belongsTo(Mobile, { foreignKey: 'mobile_id', as: 'mobile' });
@@ -83,5 +96,7 @@ module.exports = {
 	Message,
 	Notification,
 	Mobile,
-	Transaction
+	Transaction,
+	Repair,
+	BusinessDetail
 };

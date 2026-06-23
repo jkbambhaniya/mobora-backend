@@ -24,24 +24,6 @@ module.exports = (sequelize) => {
 			type: DataTypes.STRING(50),
 			defaultValue: 'pending',
 		},
-		phone: {
-			type: DataTypes.STRING(50),
-			allowNull: true,
-		},
-		shop_name: {
-			type: DataTypes.STRING,
-			allowNull: true,
-			field: 'shop_name',
-		},
-		address: {
-			type: DataTypes.TEXT,
-			allowNull: true,
-		},
-		payment_methods: {
-			type: DataTypes.TEXT,
-			allowNull: true,
-			field: 'payment_methods',
-		},
 		profile_img: {
 			type: DataTypes.TEXT('long'),
 			allowNull: true,
