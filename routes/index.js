@@ -9,6 +9,8 @@ const vendorMobileRoutes = require("./vendor/mobileRoutes");
 const vendorTransactionRoutes = require("./vendor/transactionRoutes");
 const vendorRepairRoutes = require("./vendor/repairRoutes");
 
+const adminRoutes = require("./admin/adminRoutes");
+
 // Namespaced API endpoints
 router.use("/vendor/auth", vendorAuthRoutes);
 router.use("/vendor/chat", vendorChatRoutes);
@@ -19,8 +21,9 @@ router.use("/vendor/mobiles", vendorMobileRoutes);
 router.use("/vendor/transactions", vendorTransactionRoutes);
 router.use("/vendor/repairs", vendorRepairRoutes);
 
+router.use("/admin", adminRoutes);
+
 // Ready for future integration:
-// router.use('/admin/auth', adminAuthRoutes);
 // router.use('/user/auth', userAuthRoutes);
 
 module.exports = router;

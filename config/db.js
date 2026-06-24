@@ -36,9 +36,22 @@ async function initializeDatabase() {
 		console.log(`[Database] Connected to MySQL database via Sequelize: "${dbName}"`);
 
 		// 3. Sync models (import models/index.js to register them first)
-		require('../models');
-		await sequelize.sync({ alter: true });
+		const models = require('../models');
+		await sequelize.sync();
 		console.log("[Database] Database tables synced successfully.");
+
+		// Seed default admin
+		const adminCount = await models.Admin.count();
+		if (adminCount === 0) {
+			const bcrypt = require('bcryptjs');
+			const hashedPassword = await bcrypt.hash('Admin@12345', 12);
+			await models.Admin.create({
+				name: 'System Admin',
+				email: 'admin@mobora.com',
+				password: hashedPassword
+			});
+			console.log("[Database] Default admin seeded successfully: admin@mobora.com / Admin@12345");
+		}
 
 		// 4. Post-boot: Reset B2B sessions to offline on boot
 		await sequelize.query(

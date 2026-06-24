@@ -54,11 +54,9 @@ function drawCode39(doc, text, x, y, options = {}) {
  */
 async function getTransactionInvoice(req, res) {
 	try {
-		const vendorId = req.user.id;
 		const { id } = req.params;
-
-		const tx = await Transaction.findOne({
-			where: { id, vendor_id: vendorId },
+		const queryOptions = {
+			where: { id },
 			include: [
 				{
 					model: Mobile,
@@ -97,7 +95,14 @@ async function getTransactionInvoice(req, res) {
 					}],
 				},
 			],
-		});
+		};
+
+		// Only restrict to vendor_id if role is not admin
+		if (req.user.role !== "admin") {
+			queryOptions.where.vendor_id = req.user.id;
+		}
+
+		const tx = await Transaction.findOne(queryOptions);
 
 		if (!tx) {
 			return sendError(res, "Transaction not found.", {}, 404);

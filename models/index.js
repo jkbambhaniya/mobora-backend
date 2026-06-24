@@ -12,6 +12,7 @@ const MobileModel = require('./Mobile');
 const TransactionModel = require('./Transaction');
 const RepairModel = require('./Repair');
 const BusinessDetailModel = require('./BusinessDetail');
+const AdminModel = require('./Admin');
 
 const Vendor = VendorModel(sequelize);
 const Customer = CustomerModel(sequelize);
@@ -26,6 +27,7 @@ const Mobile = MobileModel(sequelize);
 const Transaction = TransactionModel(sequelize);
 const Repair = RepairModel(sequelize);
 const BusinessDetail = BusinessDetailModel(sequelize);
+const Admin = AdminModel(sequelize);
 
 // Define associations
 Vendor.hasOne(BusinessDetail, { foreignKey: 'vendor_id', as: 'businessDetail', onDelete: 'CASCADE' });
@@ -98,5 +100,6 @@ module.exports = {
 	Mobile,
 	Transaction,
 	Repair,
-	BusinessDetail
+	BusinessDetail,
+	Admin
 };

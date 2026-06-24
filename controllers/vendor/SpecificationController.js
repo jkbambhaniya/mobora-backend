@@ -46,12 +46,6 @@ async function getAllSpecs(req, res) {
 				order: [["name", "ASC"]]
 			}),
 			Model.findAll({
-				where: {
-					[Op.or]: [
-						{ vendor_id: req.user.id },
-						{ vendor_id: null }
-					]
-				},
 				include: [{ model: Brand, as: 'brand', attributes: ['name'] }],
 				order: [
 					[{ model: Brand, as: 'brand' }, 'name', 'ASC'],
@@ -103,7 +97,7 @@ async function getBrands(req, res) {
 		const { search, page = 1, limit = 10, sortBy = "name", sortOrder = "asc" } = req.query;
 		const offset = (Number(page) - 1) * Number(limit);
 
-		const where = {};
+		const where = { status: 'approved' };
 		if (search) {
 			where.name = { [Op.like]: `%${search}%` };
 		}
@@ -227,30 +221,24 @@ async function getModels(req, res) {
 	try {
 		const { search, brandId, page = 1, limit = 10, sortBy = "name", sortOrder = "asc" } = req.query;
 		const offset = (Number(page) - 1) * Number(limit);
-		const vendorId = req.user.id;
-
-		const where = {
-			[Op.and]: [
-				{
-					[Op.or]: [
-						{ vendor_id: vendorId },
-						{ vendor_id: null }
-					]
-				}
-			]
-		};
+		const where = {};
+		const conditions = [];
 
 		if (brandId) {
-			where[Op.and].push({ brand_id: brandId });
+			conditions.push({ brand_id: brandId });
 		}
 
 		if (search) {
-			where[Op.and].push({
+			conditions.push({
 				[Op.or]: [
 					{ name: { [Op.like]: `%${search}%` } },
 					{ '$brand.name$': { [Op.like]: `%${search}%` } }
 				]
 			});
+		}
+
+		if (conditions.length > 0) {
+			where[Op.and] = conditions;
 		}
 
 		let orderClause = [['name', sortOrder === 'desc' ? 'DESC' : 'ASC']];
@@ -309,15 +297,11 @@ async function createModel(req, res) {
 			);
 		}
 
-		// Check if a model with the same name exists for this brand (either global or this vendor)
+		// Check if a model with the same name exists for this brand globally
 		const existing = await Model.findOne({
 			where: {
 				brand_id,
-				name: name.trim(),
-				[Op.or]: [
-					{ vendor_id: req.user.id },
-					{ vendor_id: null }
-				]
+				name: name.trim()
 			}
 		});
 
@@ -387,6 +371,26 @@ async function updateModel(req, res) {
 			}
 		}
 
+		const targetName = name !== undefined ? name.trim() : model.name;
+		const targetBrandId = brand_id !== undefined ? brand_id : model.brand_id;
+
+		const existing = await Model.findOne({
+			where: {
+				brand_id: targetBrandId,
+				name: targetName,
+				id: { [Op.ne]: id }
+			}
+		});
+
+		if (existing) {
+			return sendError(
+				res,
+				"A model with this name already exists under this brand.",
+				{},
+				409,
+			);
+		}
+
 		const updates = {};
 		if (name !== undefined) {
 			updates.name = name.trim();
@@ -453,7 +457,7 @@ async function getStorages(req, res) {
 		const { search, page = 1, limit = 10, sortBy = "value", sortOrder = "asc" } = req.query;
 		const offset = (Number(page) - 1) * Number(limit);
 
-		const where = {};
+		const where = { status: 'approved' };
 		if (search) {
 			where.value = { [Op.like]: `%${search}%` };
 		}
@@ -563,7 +567,7 @@ async function getRams(req, res) {
 		const { search, page = 1, limit = 10, sortBy = "value", sortOrder = "asc" } = req.query;
 		const offset = (Number(page) - 1) * Number(limit);
 
-		const where = {};
+		const where = { status: 'approved' };
 		if (search) {
 			where.value = { [Op.like]: `%${search}%` };
 		}

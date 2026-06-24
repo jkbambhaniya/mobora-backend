@@ -67,10 +67,11 @@ function requireRole(role) {
       });
     }
 
-    if (req.user.role !== role) {
+    const roles = Array.isArray(role) ? role : [role];
+    if (!roles.includes(req.user.role)) {
       return res.status(403).json({ 
         success: false, 
-        message: `Forbidden: Requires "${role}" role permission.` 
+        message: `Forbidden: Requires "${roles.join(' or ')}" role permission.` 
       });
     }
 

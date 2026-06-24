@@ -92,7 +92,8 @@ function setAuthCookies(res, token, refreshToken, vendor) {
   const commonOptions = {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax'
+    sameSite: 'lax',
+    path: '/'
   };
 
   res.cookie(tokenCookieKey, encryptedToken, {
@@ -124,6 +125,7 @@ function setAccessTokenCookie(res, token) {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
+    path: '/',
     maxAge: 15 * 60 * 1000 // 15 mins
   });
 }
@@ -140,7 +142,8 @@ function clearAuthCookies(res) {
   const commonOptions = {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax'
+    sameSite: 'lax',
+    path: '/'
   };
 
   res.clearCookie(tokenCookieKey, commonOptions);

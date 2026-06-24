@@ -18,14 +18,14 @@ module.exports = {
 				},
 				onDelete: "CASCADE",
 			},
-			customer_id: {
+			partner_id: {
 				type: Sequelize.INTEGER,
 				allowNull: true,
-				references: {
-					model: "customers",
-					key: "id",
-				},
-				onDelete: "SET NULL",
+			},
+			partner_type: {
+				type: Sequelize.ENUM("Customer", "Vendor"),
+				allowNull: false,
+				defaultValue: "Customer",
 			},
 			mobile_id: {
 				type: Sequelize.INTEGER,
@@ -65,7 +65,7 @@ module.exports = {
 		});
 
 		await queryInterface.addIndex("transactions", ["vendor_id"]);
-		await queryInterface.addIndex("transactions", ["customer_id"]);
+		await queryInterface.addIndex("transactions", ["partner_id"]);
 		await queryInterface.addIndex("transactions", ["mobile_id"]);
 	},
 

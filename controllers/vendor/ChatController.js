@@ -669,7 +669,7 @@ async function getVendors(req, res) {
 		const vendors = await Vendor.findAll({
 			where: {
 				id: { [Op.ne]: currentVendorId },
-				status: "approved",
+				status: "active",
 			},
 			attributes: ["id", "name", "email", "profile_img"],
 			include: [

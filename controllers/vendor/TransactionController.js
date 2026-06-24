@@ -399,7 +399,149 @@ async function createTransaction(req, res) {
 		return sendError(res, "Internal server error recording transaction.", {}, 500);
 	}
 }
+
+async function recalculateCustomerStats(customerId, t) {
+	if (!customerId) return;
+	const customerTxs = await Transaction.findAll({
+		where: { partner_id: customerId, partner_type: "Customer" },
+		transaction: t,
+	});
+	const totalOrders = customerTxs.length;
+	const totalSpent = customerTxs.reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
+
+	await Customer.update(
+		{ total_orders: totalOrders, total_spent: totalSpent },
+		{ where: { id: customerId }, transaction: t }
+	);
+}
+
+async function updateTransaction(req, res) {
+	const t = await sequelize.transaction();
+	try {
+		const vendorId = req.user.id;
+		const { id } = req.params;
+		const {
+			amount,
+			date,
+			notes,
+			partner_id,
+			partner_type = "Customer",
+			customer_name,
+		} = req.body;
+
+		const transaction = await Transaction.findOne({
+			where: { id, vendor_id: vendorId },
+			transaction: t,
+		});
+
+		if (!transaction) {
+			await t.rollback();
+			return sendError(res, "Transaction not found.", {}, 404);
+		}
+
+		const oldPartnerId = transaction.partner_id;
+		const oldPartnerType = transaction.partner_type;
+
+		let resolvedPartnerId = partner_id;
+		let resolvedPartnerType = partner_type;
+
+		if (!resolvedPartnerId && customer_name) {
+			if (resolvedPartnerType === "Vendor") {
+				const vend = await Vendor.findOne({
+					where: { name: customer_name },
+					transaction: t
+				});
+				if (vend) {
+					resolvedPartnerId = vend.id;
+				}
+			} else {
+				const customer = await Customer.findOne({
+					where: { name: customer_name, vendor_id: vendorId },
+					transaction: t,
+				});
+				if (customer) {
+					resolvedPartnerId = customer.id;
+					resolvedPartnerType = "Customer";
+				}
+			}
+		}
+
+		await transaction.update({
+			amount: amount !== undefined ? amount : transaction.amount,
+			date: date || transaction.date,
+			notes: notes !== undefined ? notes : transaction.notes,
+			partner_id: resolvedPartnerId !== undefined ? resolvedPartnerId : transaction.partner_id,
+			partner_type: resolvedPartnerType || transaction.partner_type,
+		}, { transaction: t });
+
+		if (oldPartnerType === "Customer" && oldPartnerId) {
+			await recalculateCustomerStats(oldPartnerId, t);
+		}
+
+		if (resolvedPartnerType === "Customer" && resolvedPartnerId && resolvedPartnerId !== oldPartnerId) {
+			await recalculateCustomerStats(resolvedPartnerId, t);
+		} else if (resolvedPartnerType === "Customer" && resolvedPartnerId && amount !== undefined) {
+			await recalculateCustomerStats(resolvedPartnerId, t);
+		}
+
+		await t.commit();
+
+		const fetchedTx = await Transaction.findByPk(transaction.id, {
+			include: [
+				{
+					model: Mobile,
+					as: "mobile",
+					include: [
+						{ model: Brand, as: "brand", attributes: ["name"] },
+						{ model: Model, as: "model", attributes: ["name"] },
+						{ model: Storage, as: "storage", attributes: ["value"] },
+						{ model: Ram, as: "ram", attributes: ["value"] },
+						{ model: Transaction, as: "transactions", attributes: ["type", "amount"] },
+					],
+				},
+				{
+					model: Customer,
+					as: "customer",
+					attributes: ["name", "phone"],
+				},
+				{
+					model: Vendor,
+					as: "partnerVendor",
+					attributes: ["name"],
+					include: [{
+						model: BusinessDetail,
+						as: "businessDetail",
+						attributes: ["phone", "shop_name"],
+					}],
+				},
+				{
+					model: Vendor,
+					as: "vendor",
+					attributes: ["id"],
+					include: [{
+						model: BusinessDetail,
+						as: "businessDetail",
+						attributes: ["gst_enabled", "gst_rate"],
+					}],
+				},
+			],
+		});
+
+		return sendSuccess(
+			res,
+			"Transaction updated successfully.",
+			{ transaction: formatTransaction(fetchedTx) },
+			200,
+		);
+	} catch (error) {
+		await t.rollback();
+		console.error("[TransactionController] updateTransaction error:", error.message);
+		return sendError(res, "Internal server error updating transaction.", {}, 500);
+	}
+}
+
 module.exports = {
 	getTransactions,
 	createTransaction,
+	updateTransaction,
 };

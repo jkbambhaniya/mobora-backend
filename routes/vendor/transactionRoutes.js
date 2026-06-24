@@ -22,10 +22,17 @@ router.post(
 	transactionController.createTransaction,
 );
 
+router.put(
+	"/:id",
+	authenticateToken,
+	requireRole("vendor"),
+	transactionController.updateTransaction,
+);
+
 router.get(
 	"/:id/invoice",
 	authenticateToken,
-	requireRole("vendor"),
+	requireRole(["vendor", "admin"]),
 	invoiceController.getTransactionInvoice,
 );
 

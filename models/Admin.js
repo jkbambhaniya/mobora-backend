@@ -1,7 +1,7 @@
 const { DataTypes } = require('sequelize');
 
 module.exports = (sequelize) => {
-	const Vendor = sequelize.define('Vendor', {
+	const Admin = sequelize.define('Admin', {
 		id: {
 			type: DataTypes.INTEGER,
 			autoIncrement: true,
@@ -20,20 +20,15 @@ module.exports = (sequelize) => {
 			type: DataTypes.STRING,
 			allowNull: false,
 		},
-		status: {
-			type: DataTypes.ENUM('pending', 'active', 'inactive'),
-			defaultValue: 'pending',
-		},
 		profile_img: {
 			type: DataTypes.TEXT('long'),
 			allowNull: true,
-			field: 'profile_img',
 		},
 	}, {
-		tableName: 'vendors',
+		tableName: 'admins',
 		underscored: true,
 		timestamps: true,
 	});
 
-	return Vendor;
+	return Admin;
 };

@@ -51,7 +51,7 @@ async function register(req, res) {
 		const hashedPassword = await bcrypt.hash(password, saltRounds);
 
 		// 3. Set registration status based on approval configuration
-		const status = AUTO_APPROVE_VENDORS ? "approved" : "pending";
+		const status = AUTO_APPROVE_VENDORS ? "active" : "pending";
 
 		// 4. Store vendor in database
 		const newVendor = await Vendor.create({
@@ -74,7 +74,7 @@ async function register(req, res) {
 
 		return sendSuccess(
 			res,
-			status === "approved"
+			status === "active"
 				? "Vendor account registered successfully!"
 				: "Registration successful! Your account is currently under review by an administrator.",
 			{
@@ -132,10 +132,10 @@ async function login(req, res) {
 			);
 		}
 
-		if (vendor.status === "suspended") {
+		if (vendor.status === "inactive") {
 			return sendError(
 				res,
-				"Your account has been suspended. Please contact system support.",
+				"Your account has been deactivated. Please contact system support.",
 				{},
 				403,
 			);

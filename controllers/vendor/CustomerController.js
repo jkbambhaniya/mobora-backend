@@ -162,7 +162,7 @@ async function getCustomer(req, res) {
 
 		// Fetch all transactions (Sales, Purchases, Exchanges) for this customer
 		const transactions = await Transaction.findAll({
-			where: { customer_id: id, vendor_id: vendorId },
+			where: { partner_id: id, vendor_id: vendorId, partner_type: "Customer" },
 			include: [
 				{
 					model: Mobile,
