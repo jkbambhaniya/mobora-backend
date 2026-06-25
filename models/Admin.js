@@ -23,6 +23,22 @@ module.exports = (sequelize) => {
 		profile_img: {
 			type: DataTypes.TEXT('long'),
 			allowNull: true,
+			get() {
+				const img = this.getDataValue('profile_img');
+				if (!img) {
+					const name = this.getDataValue('name') || 'Admin';
+					return `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=random`;
+				}
+				if (img.startsWith('http://') || img.startsWith('https://') || img.startsWith('data:')) return img;
+				const host = process.env.APP_URL || "http://127.0.0.1:5000";
+				return `${host}${img}`;
+			}
+		},
+		profile_image_url: {
+			type: DataTypes.VIRTUAL,
+			get() {
+				return this.profile_img;
+			}
 		},
 	}, {
 		tableName: 'admins',

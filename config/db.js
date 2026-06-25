@@ -40,6 +40,15 @@ async function initializeDatabase() {
 		await sequelize.sync();
 		console.log("[Database] Database tables synced successfully.");
 
+		try {
+			await sequelize.query(
+				"ALTER TABLE chat_sessions ADD COLUMN admin_unread_count INT DEFAULT 0;"
+			);
+			console.log("[Database] Added admin_unread_count column to chat_sessions.");
+		} catch (e) {
+			// Ignore if column already exists
+		}
+
 		// Seed default admin
 		const adminCount = await models.Admin.count();
 		if (adminCount === 0) {

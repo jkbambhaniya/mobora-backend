@@ -51,6 +51,11 @@ module.exports = (sequelize) => {
 			defaultValue: 0,
 			field: 'unread_count',
 		},
+		admin_unread_count: {
+			type: DataTypes.INTEGER,
+			defaultValue: 0,
+			field: 'admin_unread_count',
+		},
 		last_active: {
 			type: DataTypes.STRING(50),
 			allowNull: true,

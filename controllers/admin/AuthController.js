@@ -67,7 +67,7 @@ async function login(req, res) {
 			name: admin.name,
 			email: admin.email,
 			role: "admin",
-			profile_img: admin.profile_img,
+			profile_img: admin.profile_image_url,
 		};
 
 		setAuthCookies(res, token, refreshToken, adminDetails);
@@ -110,7 +110,7 @@ async function getProfile(req, res) {
 			name: admin.name,
 			email: admin.email,
 			role: "admin",
-			profile_img: admin.profile_img
+			profile_img: admin.profile_image_url
 		};
 
 		return sendSuccess(res, "Admin profile retrieved successfully.", { admin: adminDetails });
@@ -219,7 +219,7 @@ async function refresh(req, res) {
 			name: admin.name,
 			email: admin.email,
 			role: "admin",
-			profile_img: admin.profile_img,
+			profile_img: admin.profile_image_url,
 		};
 
 		// Reuse old refresh token for simple rotation or generate new one. Let's keep it simple.

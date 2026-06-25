@@ -13,6 +13,8 @@ const TransactionModel = require('./Transaction');
 const RepairModel = require('./Repair');
 const BusinessDetailModel = require('./BusinessDetail');
 const AdminModel = require('./Admin');
+const BlacklistedMobileModel = require('./BlacklistedMobile');
+const DeviceRequirementModel = require('./DeviceRequirement');
 
 const Vendor = VendorModel(sequelize);
 const Customer = CustomerModel(sequelize);
@@ -28,6 +30,8 @@ const Transaction = TransactionModel(sequelize);
 const Repair = RepairModel(sequelize);
 const BusinessDetail = BusinessDetailModel(sequelize);
 const Admin = AdminModel(sequelize);
+const BlacklistedMobile = BlacklistedMobileModel(sequelize);
+const DeviceRequirement = DeviceRequirementModel(sequelize);
 
 // Define associations
 Vendor.hasOne(BusinessDetail, { foreignKey: 'vendor_id', as: 'businessDetail', onDelete: 'CASCADE' });
@@ -49,6 +53,24 @@ Message.belongsTo(ChatSession, { foreignKey: 'chat_id', targetKey: 'chat_id', as
 
 Vendor.hasMany(Notification, { foreignKey: 'vendor_id', as: 'notifications', onDelete: 'CASCADE' });
 Notification.belongsTo(Vendor, { foreignKey: 'vendor_id', as: 'vendor' });
+
+Vendor.hasMany(BlacklistedMobile, { foreignKey: 'vendor_id', as: 'blacklistedMobiles', onDelete: 'CASCADE' });
+BlacklistedMobile.belongsTo(Vendor, { foreignKey: 'vendor_id', as: 'vendor' });
+
+Vendor.hasMany(DeviceRequirement, { foreignKey: 'vendor_id', as: 'deviceRequirements', onDelete: 'CASCADE' });
+DeviceRequirement.belongsTo(Vendor, { foreignKey: 'vendor_id', as: 'vendor' });
+
+Brand.hasMany(DeviceRequirement, { foreignKey: 'brand_id', as: 'deviceRequirements', onDelete: 'RESTRICT' });
+DeviceRequirement.belongsTo(Brand, { foreignKey: 'brand_id', as: 'brand' });
+
+Model.hasMany(DeviceRequirement, { foreignKey: 'model_id', as: 'deviceRequirements', onDelete: 'RESTRICT' });
+DeviceRequirement.belongsTo(Model, { foreignKey: 'model_id', as: 'model' });
+
+Storage.hasMany(DeviceRequirement, { foreignKey: 'storage_id', as: 'deviceRequirements', onDelete: 'RESTRICT' });
+DeviceRequirement.belongsTo(Storage, { foreignKey: 'storage_id', as: 'storage' });
+
+Ram.hasMany(DeviceRequirement, { foreignKey: 'ram_id', as: 'deviceRequirements', onDelete: 'RESTRICT' });
+DeviceRequirement.belongsTo(Ram, { foreignKey: 'ram_id', as: 'ram' });
 
 Brand.hasMany(Model, { foreignKey: 'brand_id', as: 'models', onDelete: 'CASCADE' });
 Model.belongsTo(Brand, { foreignKey: 'brand_id', as: 'brand' });
@@ -101,5 +123,7 @@ module.exports = {
 	Transaction,
 	Repair,
 	BusinessDetail,
-	Admin
+	Admin,
+	BlacklistedMobile,
+	DeviceRequirement
 };

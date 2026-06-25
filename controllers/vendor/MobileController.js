@@ -296,6 +296,11 @@ async function createMobile(req, res) {
 			],
 		});
 
+		// Trigger requirements alerts matching
+		checkAndAlertRequirements(fetched, vendorId).catch(err => {
+			console.error("[MobileController] checkAndAlertRequirements error:", err);
+		});
+
 		return sendSuccess(
 			res,
 			"Mobile registered successfully.",
@@ -495,6 +500,183 @@ async function getMetrics(req, res) {
 	} catch (error) {
 		console.error("[MobileController] getMetrics error:", error.message);
 		return sendError(res, "Internal server error retrieving metrics.", {}, 500);
+	}
+}
+
+/**
+ * Check and alert vendors with matching active device requirements when a new device is registered.
+ */
+async function checkAndAlertRequirements(mobile, registeringVendorId) {
+	try {
+		const { DeviceRequirement, Notification, ChatSession, Message, Vendor, BusinessDetail } = require("../../models");
+		const socketHandler = require("../../utils/socketHandler");
+		const { Op } = require("sequelize");
+
+		// Find matching active requirements
+		const requirements = await DeviceRequirement.findAll({
+			where: {
+				brand_id: mobile.brand_id,
+				model_id: mobile.model_id,
+				storage_id: mobile.storage_id,
+				ram_id: mobile.ram_id,
+				status: "Active",
+				vendor_id: { [Op.ne]: registeringVendorId },
+				[Op.or]: [
+					{ color: null },
+					{ color: "" },
+					{ color: { [Op.like]: `%${mobile.color}%` } }
+				]
+			}
+		});
+
+		if (requirements.length === 0) return;
+
+		// Fetch registering vendor profile & business details
+		const registeringVendor = await Vendor.findByPk(registeringVendorId, {
+			include: [{ model: BusinessDetail, as: "businessDetail", attributes: ["shop_name"] }]
+		});
+		const registeringShopName = registeringVendor?.businessDetail?.shop_name || registeringVendor?.name || "A vendor";
+
+		const brandName = mobile.brand ? mobile.brand.name : "";
+		const modelName = mobile.model ? mobile.model.name : "";
+		const colorVal = mobile.color || "";
+		const ramVal = mobile.ram ? mobile.ram.value : "";
+		const storageVal = mobile.storage ? mobile.storage.value : "";
+		const deviceName = `${brandName} ${modelName} (${colorVal}, ${ramVal} RAM, ${storageVal} Storage)`;
+
+		const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+		for (const req of requirements) {
+			const reqVendorId = req.vendor_id;
+
+			// 1. Create system notification
+			const notifBody = `${registeringShopName} registered a matching device: ${deviceName}!`;
+			const newNotif = await Notification.create({
+				vendor_id: reqVendorId,
+				type: "requirement_match",
+				title: "Requirement Matched!",
+				body: notifBody,
+				timestamp
+			});
+
+			// Emit socket notification if vendor online
+			const io = socketHandler.getIo();
+			if (io) {
+				io.to(`vendor-${reqVendorId}`).emit('new_notification', {
+					id: `notif-${newNotif.id}`,
+					type: 'requirement_match',
+					title: 'Requirement Matched!',
+					body: notifBody,
+					timestamp
+				});
+			}
+
+			// 2. Automatically initiate/send a B2B Chat message
+			// From: registeringVendorId (sender) -> reqVendorId (recipient)
+			const chatIdSender = `chat-${registeringVendorId}-${reqVendorId}`;
+			const chatIdRecipient = `chat-${reqVendorId}-${registeringVendorId}`;
+
+			// Check/create chat session for Registering Vendor (Sender)
+			let sessionSender = await ChatSession.findOne({
+				where: { vendor_id: registeringVendorId, recipient_vendor_id: reqVendorId }
+			});
+			if (!sessionSender) {
+				const reqVendor = await Vendor.findByPk(reqVendorId);
+				const reqVendorName = reqVendor ? reqVendor.name : 'Other Vendor';
+				const initials = reqVendorName.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) || 'VD';
+				sessionSender = await ChatSession.create({
+					chat_id: chatIdSender,
+					vendor_id: registeringVendorId,
+					recipient_vendor_id: reqVendorId,
+					customer_name: reqVendorName,
+					avatar: initials,
+					status: 'offline',
+					last_message: '',
+					unread_count: 0,
+					last_active: 'Just now',
+					notes: 'B2B Trade Partner'
+				});
+			}
+
+			// Check/create chat session for Requesting Vendor (Recipient)
+			let sessionRecipient = await ChatSession.findOne({
+				where: { vendor_id: reqVendorId, recipient_vendor_id: registeringVendorId }
+			});
+			if (!sessionRecipient) {
+				const initials = registeringVendor.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) || 'VD';
+				sessionRecipient = await ChatSession.create({
+					chat_id: chatIdRecipient,
+					vendor_id: reqVendorId,
+					recipient_vendor_id: registeringVendorId,
+					customer_name: registeringVendor.name,
+					avatar: initials,
+					status: 'offline',
+					last_message: '',
+					unread_count: 0,
+					last_active: 'Just now',
+					device_interest: registeringShopName,
+					notes: 'B2B Trade Partner'
+				});
+			}
+
+			const messageText = `Hi! I just registered a device matching your requirement: ${deviceName}. Let me know if you are interested!`;
+
+			// Create the message database entries
+			const msgSender = await Message.create({
+				chat_id: chatIdSender,
+				sender: 'vendor',
+				text: messageText,
+				timestamp,
+				status: 'sent'
+			});
+
+			const msgRecipient = await Message.create({
+				chat_id: chatIdRecipient,
+				sender: 'customer',
+				text: messageText,
+				timestamp,
+				status: 'unread'
+			});
+
+			// Update sessions last_message & unread_count
+			await ChatSession.update(
+				{ last_message: messageText, last_active: 'Just now' },
+				{ where: { chat_id: chatIdSender, vendor_id: registeringVendorId } }
+			);
+
+			await ChatSession.update(
+				{ last_message: messageText, last_active: 'Just now', unread_count: sequelize.literal('unread_count + 1') },
+				{ where: { chat_id: chatIdRecipient, vendor_id: reqVendorId } }
+			);
+
+			// Socket emits if io is active
+			if (io) {
+				// Emit message to respective rooms
+				io.to(`chat-${chatIdSender}`).emit('receive_message', {
+					id: `m-${msgSender.id}`,
+					sender: 'vendor',
+					text: messageText,
+					timestamp,
+					status: 'sent'
+				});
+
+				io.to(`chat-${chatIdRecipient}`).emit('receive_message', {
+					id: `m-${msgRecipient.id}`,
+					sender: 'customer',
+					text: messageText,
+					timestamp,
+					status: 'unread'
+				});
+
+				// Broadcast sidebar updates
+				const sessionsA = await socketHandler.fetchVendorSessions(registeringVendorId);
+				const sessionsB = await socketHandler.fetchVendorSessions(reqVendorId);
+				io.to(`vendor-${registeringVendorId}`).emit('sessions_update', sessionsA);
+				io.to(`vendor-${reqVendorId}`).emit('sessions_update', sessionsB);
+			}
+		}
+	} catch (error) {
+		console.error("[MobileController] checkAndAlertRequirements failed:", error);
 	}
 }
 

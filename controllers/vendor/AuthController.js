@@ -163,6 +163,7 @@ async function login(req, res) {
 			name: vendor.name,
 			email: vendor.email,
 			status: vendor.status,
+			profile_img: vendor.profile_image_url,
 			shop_name: vendor.businessDetail ? vendor.businessDetail.shop_name : "",
 			phone: vendor.businessDetail ? vendor.businessDetail.phone : "",
 			address: vendor.businessDetail ? vendor.businessDetail.address : "",
@@ -210,6 +211,7 @@ async function getProfile(req, res) {
 
 		// Flatten businessDetail attributes into vendor root for backward compatibility
 		const formatted = vendor.toJSON();
+		formatted.profile_img = vendor.profile_image_url;
 		if (formatted.businessDetail) {
 			formatted.shop_name = formatted.businessDetail.shop_name;
 			formatted.phone = formatted.businessDetail.phone;

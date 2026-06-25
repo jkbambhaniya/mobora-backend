@@ -1,9 +1,10 @@
 const { Server } = require('socket.io');
-const { ChatSession, Message, Vendor, Notification, sequelize } = require('../models');
+const { ChatSession, Message, Vendor, Admin, Notification, sequelize } = require('../models');
 const { Op } = require('sequelize');
 
 let io = null;
 const onlineVendors = new Map(); // maps vendorId (number) -> Array of socket IDs
+const onlineAdmins = new Map(); // maps adminId (number) -> Array of socket IDs
 
 async function updateVendorOnlineStatus(vendorId, status) {
   try {
@@ -159,6 +160,28 @@ function init(server, corsOptions) {
       }
     });
 
+    // Register admin
+    socket.on('register_admin', async ({ adminId }) => {
+      if (adminId) {
+        const aId = parseInt(adminId, 10);
+        socket.join(`admin-${aId}`);
+        socket.join('admin-room');
+        socket.adminId = aId;
+        socket.isAdmin = true;
+
+        if (!onlineAdmins.has(aId)) {
+          onlineAdmins.set(aId, []);
+        }
+        onlineAdmins.get(aId).push(socket.id);
+
+        console.log(`[Socket] Admin ${socket.id} registered to admin-${aId}`);
+
+        // Sync admin sessions
+        const adminSessions = await fetchAdminSessions();
+        socket.emit('admin_sessions_update', adminSessions);
+      }
+    });
+
     // Sync active chat session changes
     socket.on('active_chat_changed', async ({ chatId }) => {
       leaveAllChatRooms(socket);
@@ -170,6 +193,8 @@ function init(server, corsOptions) {
         
         if (socket.vendorId) {
           await markChatMessagesAsRead(chatId, socket.vendorId);
+        } else if (socket.isAdmin) {
+          await markAdminChatMessagesAsRead(chatId);
         }
       } else {
         console.log(`[Socket] Client ${socket.id} cleared active chat`);
@@ -186,13 +211,352 @@ function init(server, corsOptions) {
         
         if (socket.vendorId) {
           await markChatMessagesAsRead(chatId, socket.vendorId);
+        } else if (socket.isAdmin) {
+          await markAdminChatMessagesAsRead(chatId);
         }
       }
     });
 
     // Handle sending a message
     socket.on('send_message', async (data) => {
-      const { chatId, vendorId, text, attachment } = data;
+      const { chatId, vendorId, adminId, text, attachment } = data;
+      if (!chatId) return;
+
+      // Handle ADMIN sender or ADMIN target chats
+      if (chatId.startsWith('admin-') || adminId || socket.isAdmin) {
+        console.log(`[Socket Admin Chat] Message in chat ${chatId}: ${text}`);
+        try {
+          const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          const lastMsgText = attachment ? `Attached: ${attachment.name}` : text;
+          const attachmentType = attachment ? attachment.type : null;
+          const attachmentName = attachment ? attachment.name : null;
+          const attachmentSize = attachment ? attachment.size || null : null;
+          const attachmentUrl = attachment ? attachment.url : null;
+
+          const isSenderAdmin = socket.isAdmin || adminId;
+          const msgSender = isSenderAdmin ? 'admin' : 'vendor';
+          const msgSenderName = isSenderAdmin ? 'Administrator' : (await Vendor.findByPk(vendorId)).name;
+
+          // 1. Direct Admin Chat: admin-chat-<vendorId>
+          if (chatId.startsWith('admin-chat-')) {
+            const targetVendorId = parseInt(chatId.split('-').pop(), 10);
+            
+            // Check if vendor has this session, if not create it
+            let session = await ChatSession.findOne({ where: { chat_id: chatId, vendor_id: targetVendorId } });
+            if (!session) {
+              session = await ChatSession.create({
+                chat_id: chatId,
+                vendor_id: targetVendorId,
+                customer_name: 'System Administrator',
+                avatar: 'AD',
+                status: 'online',
+                last_message: lastMsgText,
+                unread_count: 0,
+                admin_unread_count: 0,
+                last_active: 'Just now',
+                notes: 'Admin Support Chat'
+              });
+            }
+
+            // Determine if the recipient is actively viewing this room
+            let isRecipientViewing = false;
+            if (isSenderAdmin) {
+              const room = io.sockets.adapter.rooms.get(`chat-${chatId}`);
+              isRecipientViewing = room && room.size > 0;
+            } else {
+              const room = io.sockets.adapter.rooms.get(`chat-${chatId}`);
+              isRecipientViewing = room && room.size > 0;
+            }
+
+            const initialStatus = isRecipientViewing ? 'read' : 'unread';
+
+            // Insert Message
+            const result = await Message.create({
+              chat_id: chatId,
+              sender: msgSender,
+              sender_id: isSenderAdmin ? adminId || socket.adminId : vendorId,
+              sender_name: msgSenderName,
+              text,
+              timestamp,
+              status: initialStatus,
+              attachment_type: attachmentType,
+              attachment_name: attachmentName,
+              attachment_size: attachmentSize,
+              attachment_url: attachmentUrl
+            });
+
+            // Update unread count for recipient
+            if (isSenderAdmin) {
+              const unreadIncrement = isRecipientViewing ? 0 : 1;
+              await ChatSession.update(
+                {
+                  last_message: lastMsgText,
+                  last_active: 'Just now',
+                  unread_count: sequelize.literal(`unread_count + ${unreadIncrement}`)
+                },
+                { where: { chat_id: chatId, vendor_id: targetVendorId } }
+              );
+
+              // Notify Vendor if offline or not viewing
+              if (!isRecipientViewing) {
+                const isVendorOnline = onlineVendors.has(targetVendorId) && onlineVendors.get(targetVendorId).length > 0;
+                if (isVendorOnline) {
+                  const notifBody = attachment ? `📎 ${attachment.name}` : (text || 'Sent a message');
+                  const notifBodyTrimmed = notifBody.length > 80 ? notifBody.slice(0, 80) + '…' : notifBody;
+
+                  await Notification.create({
+                    vendor_id: targetVendorId,
+                    type: 'admin_message',
+                    title: 'New message from Administrator',
+                    body: notifBodyTrimmed,
+                    chat_id: chatId,
+                    sender_name: 'Administrator',
+                    timestamp
+                  });
+
+                  io.to(`vendor-${targetVendorId}`).emit('new_notification', {
+                    type: 'admin_message',
+                    title: 'New message from Administrator',
+                    body: notifBodyTrimmed,
+                    chatId: chatId,
+                    senderName: 'Administrator'
+                  });
+                }
+              }
+            } else {
+              const adminUnreadIncrement = isRecipientViewing ? 0 : 1;
+              await ChatSession.update(
+                {
+                  last_message: lastMsgText,
+                  last_active: 'Just now',
+                  admin_unread_count: sequelize.literal(`admin_unread_count + ${adminUnreadIncrement}`)
+                },
+                { where: { chat_id: chatId, vendor_id: vendorId } }
+              );
+
+              io.to('admin-room').emit('admin_notification', {
+                type: 'new_message',
+                title: `Message from ${msgSenderName}`,
+                body: lastMsgText.length > 80 ? lastMsgText.slice(0, 80) + '…' : lastMsgText,
+                chatId: chatId,
+                senderName: msgSenderName
+              });
+            }
+
+            const newMsg = {
+              id: `m-${result.id}`,
+              sender: msgSender,
+              senderId: isSenderAdmin ? adminId || socket.adminId : vendorId,
+              senderName: msgSenderName,
+              text,
+              timestamp,
+              status: initialStatus,
+              attachment
+            };
+
+            io.to(`chat-${chatId}`).emit('receive_message', newMsg);
+
+            const sessionsV = await fetchVendorSessions(targetVendorId);
+            io.to(`vendor-${targetVendorId}`).emit('sessions_update', sessionsV);
+
+            const sessionsA = await fetchAdminSessions();
+            io.to('admin-room').emit('admin_sessions_update', sessionsA);
+          }
+
+          // 2. Admin Group Chat: admin-group-<timestamp>
+          else if (chatId.startsWith('admin-group-')) {
+            const parts = chatId.split('-');
+            const baseGroupId = parts.slice(0, 3).join('-');
+            
+            const currentSession = await ChatSession.findOne({
+              where: {
+                chat_id: { [Op.like]: `${baseGroupId}-%` }
+              }
+            });
+
+            if (currentSession) {
+              const groupMembers = JSON.parse(currentSession.group_members || '[]');
+
+              if (isSenderAdmin) {
+                for (const memberId of groupMembers) {
+                  const memberChatId = `${baseGroupId}-${memberId}`;
+
+                  const room = io.sockets.adapter.rooms.get(`chat-${memberChatId}`);
+                  const isViewing = room && room.size > 0;
+                  const initialStatus = isViewing ? 'read' : 'unread';
+
+                  const result = await Message.create({
+                    chat_id: memberChatId,
+                    sender: 'admin',
+                    sender_id: adminId || socket.adminId,
+                    sender_name: 'Administrator',
+                    text,
+                    timestamp,
+                    status: initialStatus,
+                    attachment_type: attachmentType,
+                    attachment_name: attachmentName,
+                    attachment_size: attachmentSize,
+                    attachment_url: attachmentUrl
+                  });
+
+                  const unreadIncrement = isViewing ? 0 : 1;
+                  await ChatSession.update(
+                    {
+                      last_message: lastMsgText,
+                      last_active: 'Just now',
+                      unread_count: sequelize.literal(`unread_count + ${unreadIncrement}`)
+                    },
+                    { where: { chat_id: memberChatId, vendor_id: memberId } }
+                  );
+
+                  const newMsg = {
+                    id: `m-${result.id}`,
+                    sender: 'admin',
+                    senderId: adminId || socket.adminId,
+                    senderName: 'Administrator',
+                    text,
+                    timestamp,
+                    status: initialStatus,
+                    attachment
+                  };
+
+                  io.to(`chat-${memberChatId}`).emit('receive_message', newMsg);
+                  
+                  const sessionsV = await fetchVendorSessions(memberId);
+                  io.to(`vendor-${memberId}`).emit('sessions_update', sessionsV);
+
+                  if (!isViewing) {
+                    const isMemberOnline = onlineVendors.has(memberId) && onlineVendors.get(memberId).length > 0;
+                    if (isMemberOnline) {
+                      const notifBody = attachment ? `📎 ${attachment.name}` : (text || 'Sent a message');
+                      const bodyWithSender = `Administrator: ${notifBody.length > 70 ? notifBody.slice(0, 70) + '…' : notifBody}`;
+
+                      await Notification.create({
+                        vendor_id: memberId,
+                        type: 'group_message',
+                        title: currentSession.group_name,
+                        body: bodyWithSender,
+                        chat_id: memberChatId,
+                        sender_name: 'Administrator',
+                        timestamp
+                      });
+
+                      io.to(`vendor-${memberId}`).emit('new_notification', {
+                        type: 'group_message',
+                        title: currentSession.group_name,
+                        body: bodyWithSender,
+                        chatId: memberChatId,
+                        senderName: 'Administrator'
+                      });
+                    }
+                  }
+                }
+
+                const newMsgForAdmin = {
+                  id: `m-admin-${Date.now()}`,
+                  sender: 'admin',
+                  senderId: adminId || socket.adminId,
+                  senderName: 'Administrator',
+                  text,
+                  timestamp,
+                  status: 'sent',
+                  attachment
+                };
+                io.to(`chat-${baseGroupId}`).emit('receive_message', newMsgForAdmin);
+
+                const sessionsA = await fetchAdminSessions();
+                io.to('admin-room').emit('admin_sessions_update', sessionsA);
+
+              } else {
+                const senderVendorId = vendorId;
+                
+                for (const memberId of groupMembers) {
+                  const memberChatId = `${baseGroupId}-${memberId}`;
+
+                  const isSender = (memberId === senderVendorId);
+                  const msgSender = isSender ? 'vendor' : 'customer';
+                  const room = io.sockets.adapter.rooms.get(`chat-${memberChatId}`);
+                  const isViewing = room && room.size > 0;
+                  const msgStatus = isSender ? 'sent' : (isViewing ? 'read' : 'unread');
+
+                  const result = await Message.create({
+                    chat_id: memberChatId,
+                    sender: msgSender,
+                    sender_id: senderVendorId,
+                    sender_name: msgSenderName,
+                    text,
+                    timestamp,
+                    status: msgStatus,
+                    attachment_type: attachmentType,
+                    attachment_name: attachmentName,
+                    attachment_size: attachmentSize,
+                    attachment_url: attachmentUrl
+                  });
+
+                  if (!isSender) {
+                    const unreadIncrement = isViewing ? 0 : 1;
+                    await ChatSession.update(
+                      {
+                        last_message: lastMsgText,
+                        last_active: 'Just now',
+                        unread_count: sequelize.literal(`unread_count + ${unreadIncrement}`)
+                      },
+                      { where: { chat_id: memberChatId, vendor_id: memberId } }
+                    );
+
+                    const sessionsV = await fetchVendorSessions(memberId);
+                    io.to(`vendor-${memberId}`).emit('sessions_update', sessionsV);
+                  }
+                  
+                  const newMsg = {
+                    id: `m-${result.id}`,
+                    sender: msgSender,
+                    senderId: senderVendorId,
+                    senderName: msgSenderName,
+                    text,
+                    timestamp,
+                    status: msgStatus,
+                    attachment
+                  };
+                  io.to(`chat-${memberChatId}`).emit('receive_message', newMsg);
+                }
+
+                const adminRoom = io.sockets.adapter.rooms.get(`chat-${baseGroupId}`);
+                const isAdminViewing = adminRoom && adminRoom.size > 0;
+                const adminUnreadInc = isAdminViewing ? 0 : 1;
+
+                await ChatSession.update(
+                  {
+                    last_message: lastMsgText,
+                    last_active: 'Just now',
+                    admin_unread_count: sequelize.literal(`admin_unread_count + ${adminUnreadInc}`)
+                  },
+                  { where: { chat_id: `${baseGroupId}-${senderVendorId}` } }
+                );
+
+                const newMsgForAdmin = {
+                  id: `m-vendor-${Date.now()}`,
+                  sender: 'vendor',
+                  senderId: senderVendorId,
+                  senderName: msgSenderName,
+                  text,
+                  timestamp,
+                  status: 'sent',
+                  attachment
+                };
+                io.to(`chat-${baseGroupId}`).emit('receive_message', newMsgForAdmin);
+
+                const sessionsA = await fetchAdminSessions();
+                io.to('admin-room').emit('admin_sessions_update', sessionsA);
+              }
+            }
+          }
+        } catch (err) {
+          console.error('[Socket Admin Chat Error]:', err.message);
+        }
+        return;
+      }
+
       if (!chatId || !vendorId) return;
 
       console.log(`[Socket] Message from vendor ${vendorId} in chat ${chatId}: ${text}`);
@@ -516,6 +880,20 @@ function init(server, corsOptions) {
           }
         }
       }
+      if (socket.adminId) {
+        const aId = socket.adminId;
+        const sockets = onlineAdmins.get(aId);
+        if (sockets) {
+          const idx = sockets.indexOf(socket.id);
+          if (idx !== -1) {
+            sockets.splice(idx, 1);
+          }
+          if (sockets.length === 0) {
+            onlineAdmins.delete(aId);
+            console.log(`[Socket] Admin-${aId} is now offline`);
+          }
+        }
+      }
     });
   });
 
@@ -527,41 +905,182 @@ function getIo() {
 }
 
 /**
+ * Fetch all sessions for Admin
+ */
+async function fetchAdminSessions() {
+  try {
+    const sessions = await ChatSession.findAll({
+      where: {
+        chat_id: {
+          [Op.or]: [
+            { [Op.like]: 'admin-chat-%' },
+            { [Op.like]: 'admin-group-%' }
+          ]
+        }
+      },
+      order: [['updated_at', 'DESC']]
+    });
+
+    const vendorIds = sessions.filter(s => !s.is_group).map(s => s.vendor_id);
+    const vendors = await Vendor.findAll({
+      where: { id: vendorIds },
+      attributes: ['id', 'name', 'profile_img']
+    });
+    const vendorsMap = new Map(vendors.map(v => [v.id, v]));
+
+    return sessions.map(s => {
+      let parsedMembers = [];
+      if (s.group_members) {
+        try {
+          parsedMembers = JSON.parse(s.group_members);
+        } catch (e) {
+          parsedMembers = [];
+        }
+      }
+
+      const isGroup = s.is_group === true || s.is_group === 1;
+      let displayName = s.customer_name;
+      let avatarName = s.avatar;
+      let profileImg = null;
+
+      if (!isGroup && s.chat_id.startsWith('admin-chat-')) {
+        const vendor = vendorsMap.get(s.vendor_id);
+        if (vendor) {
+          displayName = vendor.name;
+          avatarName = vendor.name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2) || "VD";
+          profileImg = vendor.profile_image_url;
+        }
+      }
+
+      return {
+        id: s.chat_id,
+        customerName: displayName,
+        customerPhone: s.customer_phone,
+        customerEmail: s.customer_email,
+        avatar: avatarName,
+        profileImg: profileImg,
+        status: s.status,
+        lastMessage: s.last_message,
+        unreadCount: s.admin_unread_count || 0,
+        lastActive: s.last_active,
+        deviceInterest: s.device_interest,
+        notes: s.notes,
+        isGroup: isGroup,
+        groupName: s.group_name,
+        groupMembers: parsedMembers,
+        vendorId: s.vendor_id
+      };
+    });
+  } catch (err) {
+    console.error('[Socket] Failed to fetch admin sessions:', err.message);
+    return [];
+  }
+}
+
+/**
+ * Mark messages in an Admin chat session as read
+ */
+async function markAdminChatMessagesAsRead(chatId) {
+  try {
+    // 1. Mark vendor messages in this chat as read
+    await Message.update(
+      { status: 'read' },
+      { where: { chat_id: chatId, sender: 'vendor', status: { [Op.ne]: 'read' } } }
+    );
+
+    // 2. Clear admin unread count for this session
+    await ChatSession.update(
+      { admin_unread_count: 0 },
+      { where: { chat_id: chatId } }
+    );
+
+    // 3. Broadcast sidebar update to all admins
+    const sessions = await fetchAdminSessions();
+    if (io) {
+      io.to('admin-room').emit('admin_sessions_update', sessions);
+    }
+
+    // 4. If direct admin-vendor chat, notify vendor
+    if (chatId.startsWith('admin-chat-')) {
+      const vendorId = parseInt(chatId.split('-').pop(), 10);
+      if (io) {
+        io.to(`chat-${chatId}`).emit('messages_read', { chatId });
+        const vendorSessions = await fetchVendorSessions(vendorId);
+        io.to(`vendor-${vendorId}`).emit('sessions_update', vendorSessions);
+      }
+    }
+  } catch (err) {
+    console.error('[Socket] Failed to mark admin chat messages as read:', err.message);
+  }
+}
+
+/**
  * Fetch all sessions for a vendor
  */
 async function fetchVendorSessions(vendorId) {
-  const sessions = await ChatSession.findAll({
-    where: { vendor_id: vendorId },
-    order: [['updated_at', 'DESC']]
-  });
-  
-  // Format for frontend (rename snake_case keys to camelCase)
-  return sessions.map(s => {
-    let parsedMembers = [];
-    if (s.group_members) {
-      try {
-        parsedMembers = JSON.parse(s.group_members);
-      } catch (e) {
-        parsedMembers = [];
-      }
+  try {
+    const sessions = await ChatSession.findAll({
+      where: { vendor_id: vendorId },
+      order: [['updated_at', 'DESC']]
+    });
+
+    const adminSession = sessions.find(s => s.chat_id.startsWith('admin-chat-'));
+    let adminProfileImg = null;
+    if (adminSession) {
+      const admin = await Admin.findOne({ attributes: ['name', 'profile_img'] });
+      adminProfileImg = admin ? admin.profile_image_url : null;
     }
-    return {
-      id: s.chat_id,
-      customerName: s.customer_name,
-      customerPhone: s.customer_phone,
-      customerEmail: s.customer_email,
-      avatar: s.avatar,
-      status: s.status,
-      lastMessage: s.last_message,
-      unreadCount: s.unread_count,
-      lastActive: s.last_active,
-      deviceInterest: s.device_interest,
-      notes: s.notes,
-      isGroup: s.is_group === true || s.is_group === 1,
-      groupName: s.group_name,
-      groupMembers: parsedMembers
-    };
-  });
+
+    const recipientVendorIds = sessions.filter(s => s.recipient_vendor_id).map(s => s.recipient_vendor_id);
+    const recipientVendors = await Vendor.findAll({
+      where: { id: recipientVendorIds },
+      attributes: ['id', 'name', 'profile_img']
+    });
+    const recipientMap = new Map(recipientVendors.map(v => [v.id, v]));
+    
+    // Format for frontend (rename snake_case keys to camelCase)
+    return sessions.map(s => {
+      let parsedMembers = [];
+      if (s.group_members) {
+        try {
+          parsedMembers = JSON.parse(s.group_members);
+        } catch (e) {
+          parsedMembers = [];
+        }
+      }
+
+      let profileImg = null;
+      if (s.chat_id.startsWith('admin-chat-')) {
+        profileImg = adminProfileImg;
+      } else if (s.recipient_vendor_id) {
+        const recipient = recipientMap.get(s.recipient_vendor_id);
+        if (recipient) {
+          profileImg = recipient.profile_image_url;
+        }
+      }
+
+      return {
+        id: s.chat_id,
+        customerName: s.customer_name,
+        customerPhone: s.customer_phone,
+        customerEmail: s.customer_email,
+        avatar: s.avatar,
+        profileImg: profileImg,
+        status: s.status,
+        lastMessage: s.last_message,
+        unreadCount: s.unread_count,
+        lastActive: s.last_active,
+        deviceInterest: s.device_interest,
+        notes: s.notes,
+        isGroup: s.is_group === true || s.is_group === 1,
+        groupName: s.group_name,
+        groupMembers: parsedMembers
+      };
+    });
+  } catch (err) {
+    console.error('[Socket] Failed to fetch vendor sessions:', err.message);
+    return [];
+  }
 }
 
 /**
@@ -733,5 +1252,6 @@ function triggerCustomerSimulator(chatId, vendorId, vendorText) {
 module.exports = {
   init,
   getIo,
-  fetchVendorSessions
+  fetchVendorSessions,
+  fetchAdminSessions
 };

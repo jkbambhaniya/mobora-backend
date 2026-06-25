@@ -19,7 +19,7 @@ function formatCustomer(c) {
 		totalSpent: c.total_spent,
 		joinedDate: c.joined_date,
 		address: c.address || "",
-		profileImg: c.profile_img || null,
+		profileImg: c.profile_image_url || null,
 		purchases: [],
 	};
 }
@@ -263,7 +263,7 @@ async function getCustomer(req, res) {
 			totalProfit,
 			joinedDate: customer.joined_date,
 			address: customer.address || "",
-			profileImg: customer.profile_img || null,
+			profileImg: customer.profile_image_url || null,
 			purchases,
 		};
 
