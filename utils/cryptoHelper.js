@@ -86,7 +86,7 @@ function setAuthCookies(res, token, refreshToken, vendor) {
   };
   const encryptedVendor = encryptValue(JSON.stringify(vendorDetails));
 
-  const accessMaxAge = 15 * 60 * 1000; // 15 mins
+  const accessMaxAge = 7 * 24 * 60 * 60 * 1000; // 7 days
   const refreshMaxAge = 7 * 24 * 60 * 60 * 1000; // 7 days
 
   const commonOptions = {
@@ -126,7 +126,7 @@ function setAccessTokenCookie(res, token) {
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
     path: '/',
-    maxAge: 15 * 60 * 1000 // 15 mins
+    maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
   });
 }
 

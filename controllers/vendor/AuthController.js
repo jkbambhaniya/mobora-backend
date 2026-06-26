@@ -150,7 +150,7 @@ async function login(req, res) {
 			gstRate: vendor.businessDetail ? vendor.businessDetail.gst_rate : 18,
 		};
 
-		const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: "15m" });
+		const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: "7d" });
 
 		const JWT_REFRESH_SECRET =
 			process.env.JWT_REFRESH_SECRET || JWT_SECRET + "_refresh";
@@ -331,7 +331,7 @@ async function refresh(req, res) {
 			gstRate: vendor.businessDetail ? vendor.businessDetail.gst_rate : 18,
 		};
 
-		const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: "15m" });
+		const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: "7d" });
 
 		// Encrypt and set new Access Token cookie
 		setAccessTokenCookie(res, token);
@@ -431,7 +431,7 @@ async function updateProfile(req, res) {
 			gstEnabled: updatedVendor.businessDetail ? updatedVendor.businessDetail.gst_enabled : true,
 			gstRate: updatedVendor.businessDetail ? updatedVendor.businessDetail.gst_rate : 18,
 		};
-		const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: "15m" });
+		const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: "7d" });
 		const JWT_REFRESH_SECRET =
 			process.env.JWT_REFRESH_SECRET || JWT_SECRET + "_refresh";
 		const refreshToken = jwt.sign(

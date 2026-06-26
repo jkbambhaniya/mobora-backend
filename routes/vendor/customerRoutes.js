@@ -38,6 +38,24 @@ router.put(
 	validateBody(updateCustomerSchema),
 	customerController.updateCustomer,
 );
+router.post(
+	"/:id/kyc",
+	authenticateToken,
+	requireRole("vendor"),
+	customerController.updateCustomerKyc,
+);
+router.post(
+	"/:id/kyc/approve",
+	authenticateToken,
+	requireRole("vendor"),
+	customerController.approveCustomerKyc,
+);
+router.post(
+	"/:id/kyc/reject",
+	authenticateToken,
+	requireRole("vendor"),
+	customerController.rejectCustomerKyc,
+);
 router.delete(
 	"/:id",
 	authenticateToken,

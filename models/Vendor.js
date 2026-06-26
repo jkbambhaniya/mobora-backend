@@ -35,7 +35,7 @@ module.exports = (sequelize) => {
 					return `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=random`;
 				}
 				if (img.startsWith('http://') || img.startsWith('https://') || img.startsWith('data:')) return img;
-				const host = process.env.APP_URL || "http://127.0.0.1:5000";
+				const host = process.env.APP_URL || "";
 				return `${host}${img}`;
 			}
 		},

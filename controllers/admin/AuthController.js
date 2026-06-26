@@ -54,7 +54,7 @@ async function login(req, res) {
 			role: "admin",
 		};
 
-		const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: "15m" });
+		const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: "7d" });
 
 		const JWT_REFRESH_SECRET =
 			process.env.JWT_REFRESH_SECRET || JWT_SECRET + "_refresh";
@@ -212,7 +212,7 @@ async function refresh(req, res) {
 			role: "admin",
 		};
 
-		const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: "15m" });
+		const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: "7d" });
 
 		const adminDetails = {
 			id: admin.id,
@@ -275,7 +275,7 @@ async function updateProfile(req, res) {
 			email: updatedAdmin.email,
 			role: "admin",
 		};
-		const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: "15m" });
+		const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: "7d" });
 		const JWT_REFRESH_SECRET =
 			process.env.JWT_REFRESH_SECRET || JWT_SECRET + "_refresh";
 		const refreshToken = jwt.sign(

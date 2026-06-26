@@ -20,7 +20,22 @@ function saveBase64File(base64Str, subFolder = "", defaultName = null) {
 		base64Str.startsWith("http://") ||
 		base64Str.startsWith("https://")
 	) {
-		return base64Str;
+		let cleanPath = base64Str;
+		const hosts = [
+			process.env.APP_URL,
+			"http://127.0.0.1:5000",
+			"http://localhost:5000",
+			"http://localhost:3000",
+			"http://127.0.0.1:3000"
+		].filter(Boolean);
+
+		for (const h of hosts) {
+			if (cleanPath.startsWith(h)) {
+				cleanPath = cleanPath.slice(h.length);
+				break;
+			}
+		}
+		return cleanPath;
 	}
 
 	// Extract base64 content and extension/mime

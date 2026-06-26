@@ -37,6 +37,21 @@ const createCustomerSchema = yup.object().shape({
     .string()
     .trim()
     .nullable()
+    .notRequired(),
+  idType: yup
+    .string()
+    .trim()
+    .nullable()
+    .notRequired(),
+  idNumber: yup
+    .string()
+    .trim()
+    .nullable()
+    .notRequired(),
+  kycDocumentImg: yup
+    .string()
+    .trim()
+    .nullable()
     .notRequired()
 });
 
@@ -77,6 +92,21 @@ const updateCustomerSchema = yup.object().shape({
     .nullable()
     .notRequired(),
   profileImg: yup
+    .string()
+    .trim()
+    .nullable()
+    .notRequired(),
+  idType: yup
+    .string()
+    .trim()
+    .nullable()
+    .notRequired(),
+  idNumber: yup
+    .string()
+    .trim()
+    .nullable()
+    .notRequired(),
+  kycDocumentImg: yup
     .string()
     .trim()
     .nullable()

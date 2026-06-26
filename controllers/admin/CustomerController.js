@@ -1,4 +1,4 @@
-const { Customer, Vendor, BusinessDetail, Transaction, Mobile, Brand, Model, Storage, Ram, sequelize } = require("../../models");
+const { Customer, Vendor, BusinessDetail, Transaction, Mobile, Brand, Model, Storage, Ram, CustomerKyc, CustomerKycDocument, sequelize } = require("../../models");
 const { sendSuccess, sendError } = require("../../utils/responseHelper");
 const { Op } = require("sequelize");
 const { saveBase64File } = require("../../utils/fileUploadHelper");
@@ -7,6 +7,23 @@ const { saveBase64File } = require("../../utils/fileUploadHelper");
  * Format database record to API response shape
  */
 function formatCustomer(c) {
+	const kyc = c.kyc || {};
+	const docs = c.kycDocuments || [];
+	let documentUrls = docs.map(doc => {
+		const img = doc.document_path;
+		if (
+			img.startsWith("/") ||
+			img.startsWith("http://") ||
+			img.startsWith("https://") ||
+			img.startsWith("data:")
+		) {
+			return img;
+		} else {
+			const host = process.env.APP_URL || "";
+			return `${host}${img}`;
+		}
+	});
+
 	return {
 		id: c.id.toString(),
 		name: c.name,
@@ -24,8 +41,54 @@ function formatCustomer(c) {
 			email: c.vendor.email || "",
 			profileImg: c.vendor.profile_image_url || null,
 			shopName: c.vendor.businessDetail ? c.vendor.businessDetail.shop_name : ""
-		} : null
+		} : null,
+		kycStatus: kyc.kyc_status || null,
+		idType: kyc.id_type || null,
+		idNumber: kyc.id_number || null,
+		kycDocumentImg: documentUrls.length > 0 ? documentUrls.join(",") : null,
 	};
+}
+
+/**
+ * Helper to process and save one or more base64 document images
+ */
+async function syncCustomerKycDocuments(customerId, kycDocumentImgInput) {
+	if (kycDocumentImgInput === undefined) return;
+
+	const { CustomerKycDocument } = require("../../models");
+
+	// If null/empty, clear all documents
+	if (!kycDocumentImgInput) {
+		await CustomerKycDocument.destroy({ where: { customer_id: customerId } });
+		return;
+	}
+
+	let images = [];
+	try {
+		const parsed = JSON.parse(kycDocumentImgInput);
+		if (Array.isArray(parsed)) {
+			images = parsed;
+		} else {
+			images = [kycDocumentImgInput];
+		}
+	} catch (e) {
+		if (kycDocumentImgInput.includes(",") && !kycDocumentImgInput.startsWith("data:")) {
+			images = kycDocumentImgInput.split(",").map(s => s.trim()).filter(Boolean);
+		} else {
+			images = [kycDocumentImgInput];
+		}
+	}
+
+	const savedPaths = images.map(img => saveBase64File(img, "customer")).filter(Boolean);
+
+	// Reset rows
+	await CustomerKycDocument.destroy({ where: { customer_id: customerId } });
+	for (const docPath of savedPaths) {
+		await CustomerKycDocument.create({
+			customer_id: customerId,
+			document_path: docPath,
+		});
+	}
 }
 
 /**
@@ -73,7 +136,9 @@ async function listCustomers(req, res) {
 					as: "vendor",
 					attributes: ["id", "name", "email", "profile_img"],
 					include: [{ model: BusinessDetail, as: "businessDetail", attributes: ["shop_name"] }]
-				}
+				},
+				{ model: CustomerKyc, as: "kyc" },
+				{ model: CustomerKycDocument, as: "kycDocuments" }
 			],
 			order,
 			limit: limitNum,
@@ -133,7 +198,9 @@ async function getCustomerById(req, res) {
 					as: "vendor",
 					attributes: ["id", "name", "email", "profile_img"],
 					include: [{ model: BusinessDetail, as: "businessDetail", attributes: ["shop_name"] }]
-				}
+				},
+				{ model: CustomerKyc, as: "kyc" },
+				{ model: CustomerKycDocument, as: "kycDocuments" }
 			]
 		});
 
@@ -236,6 +303,22 @@ async function getCustomerById(req, res) {
 			total_spent: totalSpent
 		});
 
+		const docs = customer.kycDocuments || [];
+		const documentUrls = docs.map(doc => {
+			const img = doc.document_path;
+			if (
+				img.startsWith("/") ||
+				img.startsWith("http://") ||
+				img.startsWith("https://") ||
+				img.startsWith("data:")
+			) {
+				return img;
+			} else {
+				const host = process.env.APP_URL || "";
+				return `${host}${img}`;
+			}
+		});
+
 		const formatted = {
 			id: customer.id.toString(),
 			name: customer.name,
@@ -256,6 +339,11 @@ async function getCustomerById(req, res) {
 				shopName: customer.vendor.businessDetail ? customer.vendor.businessDetail.shop_name : ""
 			} : null,
 			purchases,
+			kycStatus: customer.kyc?.kyc_status || null,
+			idType: customer.kyc?.id_type || null,
+			idNumber: customer.kyc?.id_number || null,
+			kycDocumentImg: documentUrls.length > 0 ? documentUrls.join(",") : null,
+			verifiedAt: customer.kyc?.verified_at || null,
 		};
 
 		return sendSuccess(res, "Customer details retrieved successfully.", { customer: formatted });
@@ -301,15 +389,42 @@ async function updateCustomer(req, res) {
 			}
 		}
 
+		// Update KYC details if provided
+		const { idType, idNumber, kycDocumentImg } = updates;
+		if (idType !== undefined || idNumber !== undefined || kycDocumentImg !== undefined) {
+			let dbKyc = await CustomerKyc.findOne({ where: { customer_id: id } });
+
+			if (dbKyc) {
+				const kycUpdates = {};
+				if (idType !== undefined) kycUpdates.id_type = idType;
+				if (idNumber !== undefined) kycUpdates.id_number = idNumber;
+				kycUpdates.kyc_status = "Pending";
+				await dbKyc.update(kycUpdates);
+			} else {
+				await CustomerKyc.create({
+					customer_id: id,
+					id_type: idType || null,
+					id_number: idNumber || null,
+					kyc_status: "Pending",
+				});
+			}
+
+			if (kycDocumentImg !== undefined) {
+				await syncCustomerKycDocuments(id, kycDocumentImg);
+			}
+		}
+
 		const updated = await Customer.findOne({
 			where: { id },
 			include: [
 				{
 					model: Vendor,
 					as: "vendor",
-					attributes: ["id", "name"],
+					attributes: ["id", "name", "email", "profile_img"],
 					include: [{ model: BusinessDetail, as: "businessDetail", attributes: ["shop_name"] }]
-				}
+				},
+				{ model: CustomerKyc, as: "kyc" },
+				{ model: CustomerKycDocument, as: "kycDocuments" }
 			]
 		});
 
@@ -342,9 +457,89 @@ async function deleteCustomer(req, res) {
 	}
 }
 
+/**
+ * Approve Customer KYC (Admin)
+ */
+async function approveCustomerKyc(req, res) {
+	try {
+		const { id } = req.params;
+
+		const customer = await Customer.findByPk(id);
+		if (!customer) {
+			return sendError(res, "Customer not found.", {}, 404);
+		}
+
+		let kyc = await CustomerKyc.findOne({ where: { customer_id: id } });
+		if (!kyc) {
+			return sendError(res, "KYC details not found for this customer. Please upload details first.", {}, 404);
+		}
+
+		await kyc.update({
+			kyc_status: "Verified",
+			verified_at: new Date(),
+		});
+
+		const updatedCustomer = await Customer.findOne({
+			where: { id },
+			include: [
+				{ model: CustomerKyc, as: "kyc" },
+				{ model: CustomerKycDocument, as: "kycDocuments" },
+			],
+		});
+
+		return sendSuccess(res, "Customer KYC approved and verified.", {
+			customer: formatCustomer(updatedCustomer),
+		});
+	} catch (error) {
+		console.error("[Admin CustomerController] approveCustomerKyc error:", error.message);
+		return sendError(res, "Internal server error approving KYC.", {}, 500);
+	}
+}
+
+/**
+ * Reject Customer KYC (Admin)
+ */
+async function rejectCustomerKyc(req, res) {
+	try {
+		const { id } = req.params;
+
+		const customer = await Customer.findByPk(id);
+		if (!customer) {
+			return sendError(res, "Customer not found.", {}, 404);
+		}
+
+		let kyc = await CustomerKyc.findOne({ where: { customer_id: id } });
+		if (!kyc) {
+			return sendError(res, "KYC details not found for this customer.", {}, 404);
+		}
+
+		await kyc.update({
+			kyc_status: "Rejected",
+			verified_at: null,
+		});
+
+		const updatedCustomer = await Customer.findOne({
+			where: { id },
+			include: [
+				{ model: CustomerKyc, as: "kyc" },
+				{ model: CustomerKycDocument, as: "kycDocuments" },
+			],
+		});
+
+		return sendSuccess(res, "Customer KYC rejected.", {
+			customer: formatCustomer(updatedCustomer),
+		});
+	} catch (error) {
+		console.error("[Admin CustomerController] rejectCustomerKyc error:", error.message);
+		return sendError(res, "Internal server error rejecting KYC.", {}, 500);
+	}
+}
+
 module.exports = {
 	listCustomers,
 	getCustomerById,
 	updateCustomer,
-	deleteCustomer
+	deleteCustomer,
+	approveCustomerKyc,
+	rejectCustomerKyc,
 };

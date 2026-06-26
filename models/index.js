@@ -15,6 +15,9 @@ const BusinessDetailModel = require('./BusinessDetail');
 const AdminModel = require('./Admin');
 const BlacklistedMobileModel = require('./BlacklistedMobile');
 const DeviceRequirementModel = require('./DeviceRequirement');
+const CustomerKycModel = require('./CustomerKyc');
+const CustomerKycDocumentModel = require('./CustomerKycDocument');
+
 
 const Vendor = VendorModel(sequelize);
 const Customer = CustomerModel(sequelize);
@@ -32,6 +35,9 @@ const BusinessDetail = BusinessDetailModel(sequelize);
 const Admin = AdminModel(sequelize);
 const BlacklistedMobile = BlacklistedMobileModel(sequelize);
 const DeviceRequirement = DeviceRequirementModel(sequelize);
+const CustomerKyc = CustomerKycModel(sequelize);
+const CustomerKycDocument = CustomerKycDocumentModel(sequelize);
+
 
 // Define associations
 Vendor.hasOne(BusinessDetail, { foreignKey: 'vendor_id', as: 'businessDetail', onDelete: 'CASCADE' });
@@ -41,6 +47,13 @@ Vendor.hasMany(Repair, { foreignKey: 'vendor_id', as: 'repairs', onDelete: 'CASC
 Repair.belongsTo(Vendor, { foreignKey: 'vendor_id', as: 'vendor' });
 Vendor.hasMany(Customer, { foreignKey: 'vendor_id', as: 'customers', onDelete: 'CASCADE' });
 Customer.belongsTo(Vendor, { foreignKey: 'vendor_id', as: 'vendor' });
+
+Customer.hasOne(CustomerKyc, { foreignKey: 'customer_id', as: 'kyc', onDelete: 'CASCADE' });
+CustomerKyc.belongsTo(Customer, { foreignKey: 'customer_id', as: 'customer' });
+
+Customer.hasMany(CustomerKycDocument, { foreignKey: 'customer_id', as: 'kycDocuments', onDelete: 'CASCADE' });
+CustomerKycDocument.belongsTo(Customer, { foreignKey: 'customer_id', as: 'customer' });
+
 
 Vendor.hasMany(ChatSession, { foreignKey: 'vendor_id', as: 'chatSessions', onDelete: 'CASCADE' });
 ChatSession.belongsTo(Vendor, { foreignKey: 'vendor_id', as: 'vendor' });
@@ -125,5 +138,7 @@ module.exports = {
 	BusinessDetail,
 	Admin,
 	BlacklistedMobile,
-	DeviceRequirement
+	DeviceRequirement,
+	CustomerKyc,
+	CustomerKycDocument
 };

@@ -9,6 +9,23 @@ const { saveBase64File } = require("../../utils/fileUploadHelper");
  * Format database record to API response shape
  */
 function formatCustomer(c) {
+	const kyc = c.kyc || {};
+	const docs = c.kycDocuments || [];
+	let documentUrls = docs.map(doc => {
+		const img = doc.document_path;
+		if (
+			img.startsWith("/") ||
+			img.startsWith("http://") ||
+			img.startsWith("https://") ||
+			img.startsWith("data:")
+		) {
+			return img;
+		} else {
+			const host = process.env.APP_URL || "";
+			return `${host}${img}`;
+		}
+	});
+
 	return {
 		id: c.id.toString(),
 		name: c.name,
@@ -21,8 +38,57 @@ function formatCustomer(c) {
 		address: c.address || "",
 		profileImg: c.profile_image_url || null,
 		purchases: [],
+		kycStatus: kyc.kyc_status || null,
+		idType: kyc.id_type || null,
+		idNumber: kyc.id_number || null,
+		kycDocumentImg: documentUrls.length > 0 ? documentUrls.join(",") : null,
+		verifiedAt: kyc.verified_at || null,
 	};
 }
+
+/**
+ * Helper to process and save one or more base64 document images
+ */
+async function syncCustomerKycDocuments(customerId, kycDocumentImgInput) {
+	if (kycDocumentImgInput === undefined) return;
+
+	const { CustomerKycDocument } = require("../../models");
+
+	// If null/empty, clear all documents
+	if (!kycDocumentImgInput) {
+		await CustomerKycDocument.destroy({ where: { customer_id: customerId } });
+		return;
+	}
+
+	let images = [];
+	try {
+		const parsed = JSON.parse(kycDocumentImgInput);
+		if (Array.isArray(parsed)) {
+			images = parsed;
+		} else {
+			images = [kycDocumentImgInput];
+		}
+	} catch (e) {
+		if (kycDocumentImgInput.includes(",") && !kycDocumentImgInput.startsWith("data:")) {
+			images = kycDocumentImgInput.split(",").map(s => s.trim()).filter(Boolean);
+		} else {
+			images = [kycDocumentImgInput];
+		}
+	}
+
+	const savedPaths = images.map(img => saveBase64File(img, "customer")).filter(Boolean);
+
+	// Reset rows
+	await CustomerKycDocument.destroy({ where: { customer_id: customerId } });
+	for (const docPath of savedPaths) {
+		await CustomerKycDocument.create({
+			customer_id: customerId,
+			document_path: docPath,
+		});
+	}
+}
+
+
 
 /**
  * Get all customers for logged-in vendor.
@@ -78,11 +144,16 @@ async function getCustomers(req, res) {
 		const direction = sortOrder === "desc" ? "DESC" : "ASC";
 
 		// Query customers with pagination
+		const { CustomerKyc, CustomerKycDocument } = require("../../models");
 		const { count, rows } = await Customer.findAndCountAll({
 			where,
 			order: [[orderColumn, direction]],
 			limit: Number(limit),
 			offset: Number(offset),
+			include: [
+				{ model: CustomerKyc, as: "kyc" },
+				{ model: CustomerKycDocument, as: "kycDocuments" },
+			],
 		});
 
 		// Query metrics (aggregate statistics independent of filters)
@@ -143,8 +214,13 @@ async function getCustomer(req, res) {
 		const { id } = req.params;
 		const vendorId = req.user.id;
 
+		const { CustomerKyc, CustomerKycDocument } = require("../../models");
 		const customer = await Customer.findOne({
 			where: { id, vendor_id: vendorId },
+			include: [
+				{ model: CustomerKyc, as: "kyc" },
+				{ model: CustomerKycDocument, as: "kycDocuments" },
+			],
 		});
 
 		if (!customer) {
@@ -252,6 +328,22 @@ async function getCustomer(req, res) {
 			total_spent: totalSpent,
 		});
 
+		const docs = customer.kycDocuments || [];
+		const documentUrls = docs.map(doc => {
+			const img = doc.document_path;
+			if (
+				img.startsWith("/") ||
+				img.startsWith("http://") ||
+				img.startsWith("https://") ||
+				img.startsWith("data:")
+			) {
+				return img;
+			} else {
+				const host = process.env.APP_URL || "";
+				return `${host}${img}`;
+			}
+		});
+
 		const formatted = {
 			id: customer.id.toString(),
 			name: customer.name,
@@ -265,6 +357,10 @@ async function getCustomer(req, res) {
 			address: customer.address || "",
 			profileImg: customer.profile_image_url || null,
 			purchases,
+			kycStatus: customer.kyc?.kyc_status || null,
+			idType: customer.kyc?.id_type || null,
+			idNumber: customer.kyc?.id_number || null,
+			kycDocumentImg: documentUrls.length > 0 ? documentUrls.join(",") : null,
 		};
 
 		return sendSuccess(res, "Customer retrieved successfully.", {
@@ -287,7 +383,7 @@ async function getCustomer(req, res) {
 async function createCustomer(req, res) {
 	try {
 		const vendorId = req.user.id;
-		const { name, email, phone, status, address } = req.body;
+		const { name, email, phone, status, address, idType, idNumber, kycDocumentImg } = req.body;
 		let profile_img = req.body.profile_img || req.body.profileImg || null;
 
 		if (profile_img) {
@@ -309,8 +405,31 @@ async function createCustomer(req, res) {
 			total_spent: 0,
 		});
 
+		// Save KYC if provided
+		let dbKyc = null;
+		if (idType || idNumber || kycDocumentImg) {
+			const { CustomerKyc } = require("../../models");
+			dbKyc = await CustomerKyc.create({
+				customer_id: newCustomer.id,
+				id_type: idType || null,
+				id_number: idNumber || null,
+				kyc_status: "Pending",
+			});
+			await syncCustomerKycDocuments(newCustomer.id, kycDocumentImg);
+		}
+
+		// Reload customer with KYC association so formatCustomer receives it
+		const { CustomerKyc, CustomerKycDocument } = require("../../models");
+		const reloaded = await Customer.findOne({
+			where: { id: newCustomer.id },
+			include: [
+				{ model: CustomerKyc, as: "kyc" },
+				{ model: CustomerKycDocument, as: "kycDocuments" },
+			],
+		});
+
 		return sendSuccess(res, "Customer created successfully.", {
-			customer: formatCustomer(newCustomer),
+			customer: formatCustomer(reloaded),
 		});
 	} catch (error) {
 		console.error(
@@ -365,23 +484,54 @@ async function updateCustomer(req, res) {
 			}
 		}
 
-		const [affectedCount] = await Customer.update(filteredUpdates, {
+		await Customer.update(filteredUpdates, {
 			where: { id, vendor_id: vendorId },
 		});
 
-		if (affectedCount === 0) {
-			// Check if it exists or if nothing changed
-			const exists = await Customer.findOne({
-				where: { id, vendor_id: vendorId },
-			});
-			if (!exists) {
-				return sendError(res, "Customer not found.", {}, 404);
+		// Check if customer exists
+		const customer = await Customer.findOne({
+			where: { id, vendor_id: vendorId },
+		});
+		if (!customer) {
+			return sendError(res, "Customer not found.", {}, 404);
+		}
+
+		// Update KYC details if provided
+		const { idType, idNumber, kycDocumentImg } = updates;
+		if (idType !== undefined || idNumber !== undefined || kycDocumentImg !== undefined) {
+			const { CustomerKyc } = require("../../models");
+			let dbKyc = await CustomerKyc.findOne({ where: { customer_id: id } });
+
+			if (dbKyc) {
+				const kycUpdates = {};
+				if (idType !== undefined) kycUpdates.id_type = idType;
+				if (idNumber !== undefined) kycUpdates.id_number = idNumber;
+				// Reset status to Pending if document or ID changes
+				kycUpdates.kyc_status = "Pending";
+				await dbKyc.update(kycUpdates);
+			} else {
+				await CustomerKyc.create({
+					customer_id: id,
+					id_type: idType || null,
+					id_number: idNumber || null,
+					kyc_status: "Pending",
+				});
+			}
+
+			if (kycDocumentImg !== undefined) {
+				await syncCustomerKycDocuments(id, kycDocumentImg);
 			}
 		}
 
+		const { CustomerKyc, CustomerKycDocument } = require("../../models");
 		const updated = await Customer.findOne({
 			where: { id, vendor_id: vendorId },
+			include: [
+				{ model: CustomerKyc, as: "kyc" },
+				{ model: CustomerKycDocument, as: "kycDocuments" },
+			],
 		});
+
 		return sendSuccess(res, "Customer updated successfully.", {
 			customer: formatCustomer(updated),
 		});
@@ -520,6 +670,145 @@ async function bulkUpdateStatus(req, res) {
 	}
 }
 
+/**
+ * Update Customer KYC details directly
+ */
+async function updateCustomerKyc(req, res) {
+	try {
+		const { id } = req.params;
+		const vendorId = req.user.id;
+		const { idType, idNumber, kycDocumentImg } = req.body;
+
+		const customer = await Customer.findOne({ where: { id, vendor_id: vendorId } });
+		if (!customer) {
+			return sendError(res, "Customer not found.", {}, 404);
+		}
+
+		const { CustomerKyc } = require("../../models");
+		let kyc = await CustomerKyc.findOne({ where: { customer_id: id } });
+
+		if (kyc) {
+			const updates = { kyc_status: "Pending" };
+			if (idType) updates.id_type = idType;
+			if (idNumber) updates.id_number = idNumber;
+			await kyc.update(updates);
+		} else {
+			kyc = await CustomerKyc.create({
+				customer_id: id,
+				id_type: idType || null,
+				id_number: idNumber || null,
+				kyc_status: "Pending",
+			});
+		}
+
+		if (kycDocumentImg !== undefined) {
+			await syncCustomerKycDocuments(id, kycDocumentImg);
+		}
+
+		const { CustomerKycDocument } = require("../../models");
+		const updatedCustomer = await Customer.findOne({
+			where: { id, vendor_id: vendorId },
+			include: [
+				{ model: CustomerKyc, as: "kyc" },
+				{ model: CustomerKycDocument, as: "kycDocuments" },
+			],
+		});
+
+		return sendSuccess(res, "Customer KYC details updated.", {
+			customer: formatCustomer(updatedCustomer),
+		});
+	} catch (error) {
+		console.error("[CustomerController] updateCustomerKyc error:", error.message);
+		return sendError(res, "Internal server error updating Customer KYC.", {}, 500);
+	}
+}
+
+/**
+ * Approve Customer KYC
+ */
+async function approveCustomerKyc(req, res) {
+	try {
+		const { id } = req.params;
+		const vendorId = req.user.id;
+
+		const customer = await Customer.findOne({ where: { id, vendor_id: vendorId } });
+		if (!customer) {
+			return sendError(res, "Customer not found.", {}, 404);
+		}
+
+		const { CustomerKyc } = require("../../models");
+		let kyc = await CustomerKyc.findOne({ where: { customer_id: id } });
+
+		if (!kyc) {
+			return sendError(res, "KYC details not found for this customer. Please upload details first.", {}, 404);
+		}
+
+		await kyc.update({
+			kyc_status: "Verified",
+			verified_at: new Date(),
+		});
+
+		const { CustomerKycDocument } = require("../../models");
+		const updatedCustomer = await Customer.findOne({
+			where: { id, vendor_id: vendorId },
+			include: [
+				{ model: CustomerKyc, as: "kyc" },
+				{ model: CustomerKycDocument, as: "kycDocuments" },
+			],
+		});
+
+		return sendSuccess(res, "Customer KYC approved and verified.", {
+			customer: formatCustomer(updatedCustomer),
+		});
+	} catch (error) {
+		console.error("[CustomerController] approveCustomerKyc error:", error.message);
+		return sendError(res, "Internal server error approving KYC.", {}, 500);
+	}
+}
+
+/**
+ * Reject Customer KYC
+ */
+async function rejectCustomerKyc(req, res) {
+	try {
+		const { id } = req.params;
+		const vendorId = req.user.id;
+
+		const customer = await Customer.findOne({ where: { id, vendor_id: vendorId } });
+		if (!customer) {
+			return sendError(res, "Customer not found.", {}, 404);
+		}
+
+		const { CustomerKyc } = require("../../models");
+		let kyc = await CustomerKyc.findOne({ where: { customer_id: id } });
+
+		if (!kyc) {
+			return sendError(res, "KYC details not found for this customer.", {}, 404);
+		}
+
+		await kyc.update({
+			kyc_status: "Rejected",
+			verified_at: null,
+		});
+
+		const { CustomerKycDocument } = require("../../models");
+		const updatedCustomer = await Customer.findOne({
+			where: { id, vendor_id: vendorId },
+			include: [
+				{ model: CustomerKyc, as: "kyc" },
+				{ model: CustomerKycDocument, as: "kycDocuments" },
+			],
+		});
+
+		return sendSuccess(res, "Customer KYC rejected.", {
+			customer: formatCustomer(updatedCustomer),
+		});
+	} catch (error) {
+		console.error("[CustomerController] rejectCustomerKyc error:", error.message);
+		return sendError(res, "Internal server error rejecting KYC.", {}, 500);
+	}
+}
+
 module.exports = {
 	getCustomers,
 	getCustomer,
@@ -528,4 +817,7 @@ module.exports = {
 	deleteCustomer,
 	bulkDelete,
 	bulkUpdateStatus,
+	updateCustomerKyc,
+	approveCustomerKyc,
+	rejectCustomerKyc,
 };

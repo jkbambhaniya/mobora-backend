@@ -32,6 +32,8 @@ router.get('/customers', ...adminAuth, customerController.listCustomers);
 router.get('/customers/:id', ...adminAuth, customerController.getCustomerById);
 router.put('/customers/:id', ...adminAuth, customerController.updateCustomer);
 router.delete('/customers/:id', ...adminAuth, customerController.deleteCustomer);
+router.put('/customers/:id/kyc/approve', ...adminAuth, customerController.approveCustomerKyc);
+router.put('/customers/:id/kyc/reject', ...adminAuth, customerController.rejectCustomerKyc);
 
 // ─── Specification Management ───────────────────────────────────────────────
 router.get('/specifications/summary', ...adminAuth, specController.getSpecSummary);
