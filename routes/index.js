@@ -10,6 +10,7 @@ const vendorTransactionRoutes = require("./vendor/transactionRoutes");
 const vendorRepairRoutes = require("./vendor/repairRoutes");
 const vendorBlacklistRoutes = require("./vendor/blacklistRoutes");
 const vendorRequirementRoutes = require("./vendor/deviceRequirementRoutes");
+const vendorCourierRoutes = require("./vendor/courierOrderRoutes");
 
 const adminRoutes = require("./admin/adminRoutes");
 
@@ -24,6 +25,7 @@ router.use("/vendor/transactions", vendorTransactionRoutes);
 router.use("/vendor/repairs", vendorRepairRoutes);
 router.use("/vendor/blacklist", vendorBlacklistRoutes);
 router.use("/vendor/requirements", vendorRequirementRoutes);
+router.use("/vendor/courier", vendorCourierRoutes);
 
 router.use("/admin", adminRoutes);
 

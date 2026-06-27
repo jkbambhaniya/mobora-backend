@@ -73,6 +73,12 @@ const createMobileSchema = yup.object().shape({
 		.mixed()
 		.nullable()
 		.notRequired(),
+	repairing_cost: yup
+		.number()
+		.typeError("Repairing cost must be a number.")
+		.min(0, "Repairing cost cannot be negative.")
+		.nullable()
+		.notRequired(),
 });
 
 const updateMobileSchema = yup.object().shape({
@@ -150,6 +156,12 @@ const updateMobileSchema = yup.object().shape({
 	description: yup
 		.string()
 		.trim()
+		.nullable()
+		.notRequired(),
+	repairing_cost: yup
+		.number()
+		.typeError("Repairing cost must be a number.")
+		.min(0, "Repairing cost cannot be negative.")
 		.nullable()
 		.notRequired(),
 });

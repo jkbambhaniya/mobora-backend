@@ -49,6 +49,42 @@ async function initializeDatabase() {
 			// Ignore if column already exists
 		}
 
+		try {
+			await sequelize.query(
+				"ALTER TABLE business_details ADD COLUMN markup INT DEFAULT 20;"
+			);
+			console.log("[Database] Added markup column to business_details.");
+		} catch (e) {
+			// Ignore if column already exists
+		}
+
+		try {
+			await sequelize.query(
+				"ALTER TABLE mobiles ADD COLUMN repairing_cost INT NOT NULL DEFAULT 0;"
+			);
+			console.log("[Database] Added repairing_cost column to mobiles.");
+		} catch (e) {
+			// Ignore if column already exists
+		}
+
+		try {
+			await sequelize.query(
+				"ALTER TABLE mobiles MODIFY COLUMN status ENUM('Available', 'Sold', 'Review', 'Transit', 'Pending', 'Shipped', 'Cancelled') NOT NULL DEFAULT 'Available';"
+			);
+			console.log("[Database] Modified mobiles status enum to include all transit statuses.");
+		} catch (e) {
+			console.error("[Database] Error modifying status enum:", e.message);
+		}
+
+		try {
+			await sequelize.query(
+				"ALTER TABLE mobiles DROP INDEX imei;"
+			);
+			console.log("[Database] Dropped unique index imei on mobiles.");
+		} catch (e) {
+			// Ignore if index does not exist or has already been dropped
+		}
+
 		// Seed default admin
 		const adminCount = await models.Admin.count();
 		if (adminCount === 0) {

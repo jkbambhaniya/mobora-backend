@@ -170,6 +170,7 @@ async function login(req, res) {
 			payment_methods: vendor.businessDetail ? vendor.businessDetail.payment_methods : "",
 			gst_enabled: vendor.businessDetail ? vendor.businessDetail.gst_enabled : true,
 			gst_rate: vendor.businessDetail ? vendor.businessDetail.gst_rate : 18,
+			markup: vendor.businessDetail ? vendor.businessDetail.markup : 20,
 		};
 
 		// 5. Encrypt tokens and set secure cookies
@@ -219,6 +220,7 @@ async function getProfile(req, res) {
 			formatted.payment_methods = formatted.businessDetail.payment_methods;
 			formatted.gst_enabled = formatted.businessDetail.gst_enabled;
 			formatted.gst_rate = formatted.businessDetail.gst_rate;
+			formatted.markup = formatted.businessDetail.markup;
 		} else {
 			formatted.shop_name = "";
 			formatted.phone = "";
@@ -226,6 +228,7 @@ async function getProfile(req, res) {
 			formatted.payment_methods = "";
 			formatted.gst_enabled = true;
 			formatted.gst_rate = 18;
+			formatted.markup = 20;
 		}
 
 		return sendSuccess(res, "Profile retrieved successfully.", { vendor: formatted });
@@ -398,7 +401,7 @@ async function updateProfile(req, res) {
 		}
 
 		// Update business details fields in DB
-		const businessFields = ["phone", "shop_name", "address", "payment_methods", "gst_enabled", "gst_rate"];
+		const businessFields = ["phone", "shop_name", "address", "payment_methods", "gst_enabled", "gst_rate", "markup"];
 		const businessUpdates = {};
 		for (const field of businessFields) {
 			if (req.body[field] !== undefined) {
@@ -448,6 +451,7 @@ async function updateProfile(req, res) {
 			formattedVendor.payment_methods = formattedVendor.businessDetail.payment_methods;
 			formattedVendor.gst_enabled = formattedVendor.businessDetail.gst_enabled;
 			formattedVendor.gst_rate = formattedVendor.businessDetail.gst_rate;
+			formattedVendor.markup = formattedVendor.businessDetail.markup;
 		}
 
 		setAuthCookies(res, token, refreshToken, formattedVendor);

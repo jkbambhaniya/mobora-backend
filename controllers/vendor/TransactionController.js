@@ -10,10 +10,12 @@ function formatTransaction(tx) {
 	const txs = tx.mobile && tx.mobile.transactions ? tx.mobile.transactions : [];
 	const purchaseTx = txs.find(t => t.type === "Purchase");
 	const purchasePrice = purchaseTx ? purchaseTx.amount : undefined;
+	const repairingCost = tx.mobile ? (tx.mobile.repairing_cost || 0) : 0;
+	const netCostPrice = purchasePrice !== undefined ? (purchasePrice + repairingCost) : undefined;
 
 	const gstEnabled = (tx.vendor && tx.vendor.businessDetail) ? tx.vendor.businessDetail.gst_enabled : true;
 	const gstRate = (tx.vendor && tx.vendor.businessDetail) ? tx.vendor.businessDetail.gst_rate : 18;
-	const gstCalc = calculateMarginGst(tx.amount, purchasePrice, tx.type, gstEnabled, gstRate);
+	const gstCalc = calculateMarginGst(tx.amount, netCostPrice, tx.type, gstEnabled, gstRate);
 
 	let partnerName = "Walk-in Customer";
 	if (tx.partner_type === "Customer" && tx.customer) {
@@ -341,6 +343,35 @@ async function createTransaction(req, res) {
 				{ total_orders: totalOrders, total_spent: totalSpent },
 				{ where: { id: resolvedPartnerId }, transaction: t }
 			);
+		}
+
+		// Replicate V2V Direct Transactions
+		if (type === "Sale" && resolvedPartnerType === "Vendor" && resolvedPartnerId) {
+			const buyerMobile = await Mobile.create({
+				vendor_id: resolvedPartnerId,
+				brand_id: mobile.brand_id,
+				model_id: mobile.model_id,
+				storage_id: mobile.storage_id,
+				ram_id: mobile.ram_id,
+				color: mobile.color,
+				imei: mobile.imei ? `${mobile.imei}` : null,
+				condition: mobile.condition,
+				battery_health: mobile.battery_health,
+				status: "Available",
+				description: `Purchased from Vendor ID ${vendorId} (Direct Transaction).`,
+				repairing_cost: 0
+			}, { transaction: t });
+
+			await Transaction.create({
+				vendor_id: resolvedPartnerId,
+				partner_id: vendorId,
+				partner_type: "Vendor",
+				mobile_id: buyerMobile.id,
+				type: "Purchase",
+				amount: amount,
+				date: date,
+				notes: notes || `Purchased from Vendor ID ${vendorId} (Direct Transaction).`,
+			}, { transaction: t });
 		}
 
 		await t.commit();

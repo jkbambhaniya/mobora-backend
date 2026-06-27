@@ -33,6 +33,7 @@ function formatMobile(m) {
 		condition: m.condition,
 		price: price,
 		purchasePrice: purchasePrice,
+		repairingCost: m.repairing_cost || 0,
 		stock: 1, // Each listing is tracked by IMEI and has a stock count of 1
 		batteryHealth: m.battery_health,
 		status: m.status,
@@ -234,6 +235,7 @@ async function createMobile(req, res) {
 			status,
 			description,
 			customer_id,
+			repairing_cost,
 		} = req.body;
 
 		// Check duplicate IMEI if provided
@@ -262,6 +264,7 @@ async function createMobile(req, res) {
 			battery_health: battery_health !== undefined ? battery_health : null,
 			status: status || "Available",
 			description: description || null,
+			repairing_cost: repairing_cost ? Number(repairing_cost) : 0,
 		}, { transaction: t });
 
 		// Create corresponding Purchase transaction
@@ -362,6 +365,7 @@ async function updateMobile(req, res) {
 			"battery_health",
 			"status",
 			"description",
+			"repairing_cost",
 		];
 
 		const filteredUpdates = {};

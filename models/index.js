@@ -17,6 +17,7 @@ const BlacklistedMobileModel = require('./BlacklistedMobile');
 const DeviceRequirementModel = require('./DeviceRequirement');
 const CustomerKycModel = require('./CustomerKyc');
 const CustomerKycDocumentModel = require('./CustomerKycDocument');
+const CourierOrderModel = require('./CourierOrder');
 
 
 const Vendor = VendorModel(sequelize);
@@ -37,6 +38,7 @@ const BlacklistedMobile = BlacklistedMobileModel(sequelize);
 const DeviceRequirement = DeviceRequirementModel(sequelize);
 const CustomerKyc = CustomerKycModel(sequelize);
 const CustomerKycDocument = CustomerKycDocumentModel(sequelize);
+const CourierOrder = CourierOrderModel(sequelize);
 
 
 // Define associations
@@ -121,6 +123,20 @@ Transaction.belongsTo(Vendor, { foreignKey: 'partner_id', constraints: false, as
 Mobile.hasMany(Transaction, { foreignKey: 'mobile_id', as: 'transactions', onDelete: 'CASCADE' });
 Transaction.belongsTo(Mobile, { foreignKey: 'mobile_id', as: 'mobile' });
 
+// CourierOrder associations
+Vendor.hasMany(CourierOrder, { foreignKey: 'seller_id', as: 'salesOrders', onDelete: 'CASCADE' });
+CourierOrder.belongsTo(Vendor, { foreignKey: 'seller_id', as: 'seller' });
+
+Vendor.hasMany(CourierOrder, { foreignKey: 'buyer_id', as: 'purchaseOrders', onDelete: 'CASCADE' });
+CourierOrder.belongsTo(Vendor, { foreignKey: 'buyer_id', as: 'buyer' });
+
+Mobile.hasMany(CourierOrder, { foreignKey: 'seller_mobile_id', as: 'sellerCourierOrders', onDelete: 'CASCADE' });
+CourierOrder.belongsTo(Mobile, { foreignKey: 'seller_mobile_id', as: 'sellerMobile' });
+
+Mobile.hasMany(CourierOrder, { foreignKey: 'buyer_mobile_id', as: 'buyerCourierOrders', onDelete: 'SET NULL' });
+CourierOrder.belongsTo(Mobile, { foreignKey: 'buyer_mobile_id', as: 'buyerMobile' });
+
+
 module.exports = {
 	sequelize,
 	Vendor,
@@ -140,5 +156,7 @@ module.exports = {
 	BlacklistedMobile,
 	DeviceRequirement,
 	CustomerKyc,
-	CustomerKycDocument
+	CustomerKycDocument,
+	CourierOrder
 };
+

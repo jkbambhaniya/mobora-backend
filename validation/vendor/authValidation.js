@@ -97,6 +97,13 @@ const updateProfileSchema = yup.object().shape({
     .min(0)
     .max(100)
     .nullable()
+    .notRequired(),
+  markup: yup
+    .number()
+    .integer()
+    .min(0)
+    .max(1000)
+    .nullable()
     .notRequired()
 });
 

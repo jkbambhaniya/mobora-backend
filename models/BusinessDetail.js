@@ -45,6 +45,11 @@ module.exports = (sequelize) => {
 			defaultValue: 18,
 			field: 'gst_rate',
 		},
+		markup: {
+			type: DataTypes.INTEGER,
+			defaultValue: 20,
+			field: 'markup',
+		},
 	}, {
 		tableName: 'business_details',
 		underscored: true,
