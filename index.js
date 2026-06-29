@@ -29,7 +29,7 @@ app.use(cors({
 // 3. Rate limiting to prevent brute-force attacks
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 200, // Limit each IP to 200 requests per 15 mins
+  max: process.env.NODE_ENV === 'production' ? 200 : 10000, // Limit each IP
   message: {
     success: false,
     message: 'Too many requests, please try again later.'
@@ -42,7 +42,7 @@ app.use('/api', globalLimiter);
 // Stricter rate limit specifically for authentication routes (login/register)
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 30, // Limit each IP to 30 authentication requests per 15 mins
+  max: process.env.NODE_ENV === 'production' ? 30 : 1000, // Limit each IP
   message: {
     success: false,
     message: 'Too many authentication attempts. Please try again after 15 minutes.'

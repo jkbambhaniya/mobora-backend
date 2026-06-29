@@ -1,4 +1,4 @@
-const { CourierOrder, Mobile, Transaction, Vendor, Brand, Model, Storage, Ram, Notification, ChatSession, Message, sequelize } = require("../../models");
+const { CourierOrder, Mobile, MobileStock, Transaction, Vendor, Brand, Model, Storage, Ram, Notification, ChatSession, Message, sequelize } = require("../../models");
 const { sendSuccess, sendError } = require("../../utils/responseHelper");
 const { Op } = require("sequelize");
 const socketHandler = require("../../utils/socketHandler");
@@ -88,37 +88,48 @@ async function createCourierOrder(req, res) {
 		}
 
 		// Verify seller owns this mobile and it is available
-		const mobile = await Mobile.findOne({
-			where: { id: mobile_id, vendor_id: sellerId },
+		const stock = await MobileStock.findOne({
+			where: { mobile_id: mobile_id, vendor_id: sellerId },
+			include: [{ model: Mobile, as: "mobile" }],
 			transaction: t,
 		});
 
-		if (!mobile) {
+		if (!stock) {
 			await t.rollback();
 			return sendError(res, "Mobile listing not found in your inventory.", {}, 404);
 		}
 
-		if (mobile.status !== "Available") {
+		if (stock.status !== "Available") {
 			await t.rollback();
-			return sendError(res, `Mobile is not available for sale. Current status: ${mobile.status}`, {}, 400);
+			return sendError(res, `Mobile is not available for sale. Current status: ${stock.status}`, {}, 400);
 		}
 
-		// Update mobile status to Pending
-		await mobile.update({ status: "Pending" }, { transaction: t });
+		const mobile = stock.mobile;
 
-		// Create buyer's mobile in Pending status
-		const buyerMobile = await Mobile.create({
+		// Update mobile status to Pending in MobileStock
+		await stock.update({ status: "Pending" }, { transaction: t });
+
+		// Resolve or Create buyer's mobile
+		let buyerMobileId = mobile.id;
+		if (!mobile.imei) {
+			const buyerMobile = await Mobile.create({
+				brand_id: mobile.brand_id,
+				model_id: mobile.model_id,
+				storage_id: mobile.storage_id,
+				ram_id: mobile.ram_id,
+				color: mobile.color,
+				condition: mobile.condition,
+				battery_health: mobile.battery_health,
+				description: `Courier purchase pending from Vendor ID ${sellerId}.`,
+			}, { transaction: t });
+			buyerMobileId = buyerMobile.id;
+		}
+
+		// Create buyer's MobileStock record in Pending status
+		await MobileStock.create({
+			mobile_id: buyerMobileId,
 			vendor_id: buyer_id,
-			brand_id: mobile.brand_id,
-			model_id: mobile.model_id,
-			storage_id: mobile.storage_id,
-			ram_id: mobile.ram_id,
-			color: mobile.color,
-			imei: mobile.imei ? `${mobile.imei}` : null,
-			condition: mobile.condition,
-			battery_health: mobile.battery_health,
 			status: "Pending",
-			description: `Courier purchase pending from Vendor ID ${sellerId}.`,
 			repairing_cost: 0
 		}, { transaction: t });
 
@@ -127,7 +138,7 @@ async function createCourierOrder(req, res) {
 			seller_id: sellerId,
 			buyer_id,
 			seller_mobile_id: mobile_id,
-			buyer_mobile_id: buyerMobile.id,
+			buyer_mobile_id: buyerMobileId,
 			amount,
 			status: "Pending",
 			date: new Date().toISOString().split("T")[0],
@@ -318,15 +329,15 @@ async function shipCourierOrder(req, res) {
 		const t = await sequelize.transaction();
 		try {
 			// Update seller mobile status to Shipped
-			await Mobile.update({ status: "Shipped" }, {
-				where: { id: order.seller_mobile_id },
+			await MobileStock.update({ status: "Shipped" }, {
+				where: { mobile_id: order.seller_mobile_id, vendor_id: sellerId },
 				transaction: t
 			});
 
 			// Update buyer mobile status to Shipped
 			if (order.buyer_mobile_id) {
-				await Mobile.update({ status: "Shipped" }, {
-					where: { id: order.buyer_mobile_id },
+				await MobileStock.update({ status: "Shipped" }, {
+					where: { mobile_id: order.buyer_mobile_id, vendor_id: order.buyer_id },
 					transaction: t
 				});
 			}
@@ -534,13 +545,21 @@ async function receiveCourierOrder(req, res) {
 			return sendError(res, "Original mobile listing not found.", {}, 404);
 		}
 
-		// 1. Mark Seller's Mobile as Sold
-		await sellerMobile.update({ status: "Sold" }, { transaction: t });
+		// 1. Mark Seller's Mobile as Sold in MobileStock
+		await MobileStock.update({ status: "Sold" }, {
+			where: { mobile_id: sellerMobile.id, vendor_id: order.seller_id },
+			transaction: t
+		});
 
-		// 2. Update Buyer's Mobile status to Available
+		// 2. Update Buyer's Mobile status to Available in MobileStock and description in Mobile
 		if (order.buyer_mobile_id) {
+			await MobileStock.update({
+				status: "Available"
+			}, {
+				where: { mobile_id: order.buyer_mobile_id, vendor_id: buyerId },
+				transaction: t
+			});
 			await Mobile.update({
-				status: "Available",
 				description: `Purchased from Vendor ID ${order.seller_id} via Courier Order #${order.id}.`
 			}, {
 				where: { id: order.buyer_mobile_id },
@@ -768,20 +787,16 @@ async function cancelCourierOrder(req, res) {
 			return sendError(res, `Cannot cancel order in status: ${order.status}`, {}, 400);
 		}
 
-		// Revert Mobile status to Available
-		const mobile = await Mobile.findOne({
-			where: { id: order.seller_mobile_id },
+		// Revert Mobile status to Available in MobileStock
+		await MobileStock.update({ status: "Available" }, {
+			where: { mobile_id: order.seller_mobile_id, vendor_id: order.seller_id },
 			transaction: t
 		});
 
-		if (mobile) {
-			await mobile.update({ status: "Available" }, { transaction: t });
-		}
-
-		// Revert Buyer Mobile status to Cancelled
+		// Revert Buyer Mobile status to Cancelled in MobileStock
 		if (order.buyer_mobile_id) {
-			await Mobile.update({ status: "Cancelled" }, {
-				where: { id: order.buyer_mobile_id },
+			await MobileStock.update({ status: "Cancelled" }, {
+				where: { mobile_id: order.buyer_mobile_id, vendor_id: order.buyer_id },
 				transaction: t
 			});
 		}

@@ -70,6 +70,17 @@ router.get('/requirements/:id', ...adminAuth, requirementController.getRequireme
 router.delete('/requirements/:id', ...adminAuth, requirementController.deleteRequirement);
 router.put('/requirements/:id/status', ...adminAuth, requirementController.updateRequirementStatus);
 
+// ─── Mobile Inventory Management ─────────────────────────────────────────────
+const mobileController = require('../../controllers/admin/MobileController');
+router.get('/mobiles', ...adminAuth, mobileController.listMobiles);
+router.get('/mobiles/stats', ...adminAuth, mobileController.getMobileStats);
+router.get('/mobiles/device/:id', ...adminAuth, mobileController.getMobileStocksByMobileId);
+router.get('/mobiles/device/slug/:brandSlug/:modelSlug', ...adminAuth, mobileController.getMobileStocksBySlug);
+router.get('/mobiles/imei/:imei', ...adminAuth, mobileController.getMobileStockByImei);
+router.get('/mobiles/:id', ...adminAuth, mobileController.getMobileById);
+router.put('/mobiles/:id/status', ...adminAuth, mobileController.updateMobileStockStatus);
+router.delete('/mobiles/:id', ...adminAuth, mobileController.deleteMobileStock);
+
 // ─── Chat Management ────────────────────────────────────────────────────────
 const adminChatRoutes = require('./adminChatRoutes');
 router.use('/chat', adminChatRoutes);

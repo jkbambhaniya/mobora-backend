@@ -9,15 +9,7 @@ module.exports = {
 				primaryKey: true,
 				allowNull: false,
 			},
-			vendor_id: {
-				type: Sequelize.INTEGER,
-				allowNull: false,
-				references: {
-					model: "vendors",
-					key: "id",
-				},
-				onDelete: "CASCADE",
-			},
+
 			brand_id: {
 				type: Sequelize.INTEGER,
 				allowNull: false,
@@ -72,11 +64,7 @@ module.exports = {
 				type: Sequelize.INTEGER,
 				allowNull: false,
 			},
-			status: {
-				type: Sequelize.ENUM("Active", "Sold", "Review"),
-				allowNull: false,
-				defaultValue: "Active",
-			},
+
 			description: {
 				type: Sequelize.TEXT,
 				allowNull: true,
@@ -93,7 +81,7 @@ module.exports = {
 			},
 		});
 
-		await queryInterface.addIndex("mobiles", ["vendor_id"]);
+
 		await queryInterface.addIndex("mobiles", ["brand_id"]);
 		await queryInterface.addIndex("mobiles", ["model_id"]);
 	},

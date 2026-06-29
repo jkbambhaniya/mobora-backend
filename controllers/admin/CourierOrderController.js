@@ -1,4 +1,4 @@
-const { CourierOrder, Mobile, Vendor, BusinessDetail, Brand, Model, Storage, Ram, sequelize } = require("../../models");
+const { CourierOrder, Mobile, MobileStock, Vendor, BusinessDetail, Brand, Model, Storage, Ram, sequelize } = require("../../models");
 const { sendSuccess, sendError } = require("../../utils/responseHelper");
 const { Op } = require("sequelize");
 
@@ -129,22 +129,21 @@ async function cancelCourierOrder(req, res) {
 			return sendError(res, `Cannot cancel order in status: ${order.status}`, {}, 400);
 		}
 
-		// Revert Seller's Mobile status to Available
-		const sellerMobile = await Mobile.findOne({
-			where: { id: order.seller_mobile_id },
-			transaction: t
-		});
+		// Revert Seller's Mobile status to Available in MobileStock
+		await MobileStock.update(
+			{ status: "Available" },
+			{
+				where: { mobile_id: order.seller_mobile_id, vendor_id: order.seller_id },
+				transaction: t
+			}
+		);
 
-		if (sellerMobile) {
-			await sellerMobile.update({ status: "Available" }, { transaction: t });
-		}
-
-		// Revert Buyer's Mobile status to Cancelled
+		// Revert Buyer's Mobile status to Cancelled in MobileStock
 		if (order.buyer_mobile_id) {
-			await Mobile.update(
+			await MobileStock.update(
 				{ status: "Cancelled" },
 				{
-					where: { id: order.buyer_mobile_id },
+					where: { mobile_id: order.buyer_mobile_id, vendor_id: order.buyer_id },
 					transaction: t
 				}
 			);

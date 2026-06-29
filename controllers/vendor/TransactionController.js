@@ -1,4 +1,4 @@
-const { Transaction, Mobile, Customer, Brand, Model, Storage, Ram, Vendor, BusinessDetail, sequelize } = require("../../models");
+const { Transaction, Mobile, MobileStock, Customer, Brand, Model, Storage, Ram, Vendor, BusinessDetail, sequelize } = require("../../models");
 const { Op } = require("sequelize");
 const { sendSuccess, sendError } = require("../../utils/responseHelper");
 const { calculateMarginGst } = require("../../utils/gstHelper");
@@ -10,7 +10,10 @@ function formatTransaction(tx) {
 	const txs = tx.mobile && tx.mobile.transactions ? tx.mobile.transactions : [];
 	const purchaseTx = txs.find(t => t.type === "Purchase");
 	const purchasePrice = purchaseTx ? purchaseTx.amount : undefined;
-	const repairingCost = tx.mobile ? (tx.mobile.repairing_cost || 0) : 0;
+	const stockRecord = tx.mobile && tx.mobile.stocks
+		? tx.mobile.stocks.find(s => s.vendor_id === tx.vendor_id)
+		: null;
+	const repairingCost = stockRecord ? (stockRecord.repairing_cost || 0) : 0;
 	const netCostPrice = purchasePrice !== undefined ? (purchasePrice + repairingCost) : undefined;
 
 	const gstEnabled = (tx.vendor && tx.vendor.businessDetail) ? tx.vendor.businessDetail.gst_enabled : true;
@@ -82,6 +85,7 @@ async function getTransactions(req, res) {
 					{ model: Storage, as: "storage", attributes: ["value"] },
 					{ model: Ram, as: "ram", attributes: ["value"] },
 					{ model: Transaction, as: "transactions", attributes: ["type", "amount"] },
+					{ model: MobileStock, as: "stocks", attributes: ["vendor_id", "status", "repairing_cost"] },
 				],
 			},
 			{
@@ -196,13 +200,10 @@ async function createTransaction(req, res) {
 		let mobileId = mobile_id;
 
 		if (mobileId) {
-			mobile = await Mobile.findOne({
-				where: { id: mobileId, vendor_id: vendorId },
-				transaction: t,
-			});
+			mobile = await Mobile.findByPk(mobileId, { transaction: t });
 		} else if (imei) {
 			mobile = await Mobile.findOne({
-				where: { imei, vendor_id: vendorId },
+				where: { imei },
 				transaction: t,
 			});
 		}
@@ -236,7 +237,6 @@ async function createTransaction(req, res) {
 			});
 
 			mobile = await Mobile.create({
-				vendor_id: vendorId,
 				brand_id: brandObj.id,
 				model_id: modelObj.id,
 				storage_id: storageObj.id,
@@ -245,7 +245,6 @@ async function createTransaction(req, res) {
 				imei: imei || null,
 				condition: condition || "NEW",
 				battery_health: battery_health !== undefined ? battery_health : 90,
-				status: "Available",
 				description: notes || `Acquired via ${type}.`
 			}, { transaction: t });
 		}
@@ -280,20 +279,38 @@ async function createTransaction(req, res) {
 			}
 		}
 
-		// 3. Atomically Update Mobile attributes based on transaction type
+		// 3. Update MobileStock ownership/status and physical attributes
 		if (type === "Sale") {
+			const stock = await MobileStock.findOne({
+				where: { mobile_id: mobile.id, vendor_id: vendorId },
+				transaction: t
+			});
+			if (stock) {
+				await stock.update({ status: "Sold" }, { transaction: t });
+			} else {
+				await MobileStock.create({
+					mobile_id: mobile.id,
+					vendor_id: vendorId,
+					status: "Sold"
+				}, { transaction: t });
+			}
 			await mobile.update(
-				{
-					status: "Sold",
-					description: notes || `Sold to partner.`,
-				},
-				{ transaction: t },
+				{ description: notes || `Sold to partner.` },
+				{ transaction: t }
 			);
 		} else if (type === "Purchase" || type === "Exchange") {
-			// Buyback reactivation or new stock acquisition
+			const [stock] = await MobileStock.findOrCreate({
+				where: { mobile_id: mobile.id, vendor_id: vendorId },
+				defaults: {
+					mobile_id: mobile.id,
+					vendor_id: vendorId,
+					status: "Available"
+				},
+				transaction: t
+			});
+			await stock.update({ status: "Available" }, { transaction: t });
 			await mobile.update(
 				{
-					status: "Available",
 					condition: condition || mobile.condition,
 					battery_health: battery_health !== undefined ? battery_health : mobile.battery_health,
 					description: notes || `Re-acquired via buyback.`,
@@ -347,18 +364,26 @@ async function createTransaction(req, res) {
 
 		// Replicate V2V Direct Transactions
 		if (type === "Sale" && resolvedPartnerType === "Vendor" && resolvedPartnerId) {
-			const buyerMobile = await Mobile.create({
+			let buyerMobileId = mobile.id;
+			if (!mobile.imei) {
+				const buyerMobile = await Mobile.create({
+					brand_id: mobile.brand_id,
+					model_id: mobile.model_id,
+					storage_id: mobile.storage_id,
+					ram_id: mobile.ram_id,
+					color: mobile.color,
+					condition: mobile.condition,
+					battery_health: mobile.battery_health,
+					description: `Purchased from Vendor ID ${vendorId} (Direct Transaction).`,
+				}, { transaction: t });
+				buyerMobileId = buyerMobile.id;
+			}
+
+			// Create MobileStock entry for the buyer vendor
+			await MobileStock.create({
+				mobile_id: buyerMobileId,
 				vendor_id: resolvedPartnerId,
-				brand_id: mobile.brand_id,
-				model_id: mobile.model_id,
-				storage_id: mobile.storage_id,
-				ram_id: mobile.ram_id,
-				color: mobile.color,
-				imei: mobile.imei ? `${mobile.imei}` : null,
-				condition: mobile.condition,
-				battery_health: mobile.battery_health,
 				status: "Available",
-				description: `Purchased from Vendor ID ${vendorId} (Direct Transaction).`,
 				repairing_cost: 0
 			}, { transaction: t });
 
@@ -366,7 +391,7 @@ async function createTransaction(req, res) {
 				vendor_id: resolvedPartnerId,
 				partner_id: vendorId,
 				partner_type: "Vendor",
-				mobile_id: buyerMobile.id,
+				mobile_id: buyerMobileId,
 				type: "Purchase",
 				amount: amount,
 				date: date,
@@ -388,6 +413,7 @@ async function createTransaction(req, res) {
 						{ model: Storage, as: "storage", attributes: ["value"] },
 						{ model: Ram, as: "ram", attributes: ["value"] },
 						{ model: Transaction, as: "transactions", attributes: ["type", "amount"] },
+						{ model: MobileStock, as: "stocks", attributes: ["vendor_id", "status", "repairing_cost"] },
 					],
 				},
 				{

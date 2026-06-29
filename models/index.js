@@ -19,6 +19,7 @@ const CustomerKycModel = require('./CustomerKyc');
 const CustomerKycDocumentModel = require('./CustomerKycDocument');
 const CourierOrderModel = require('./CourierOrder');
 const ChatTemplateModel = require('./ChatTemplate');
+const MobileStockModel = require('./MobileStock');
 
 
 const Vendor = VendorModel(sequelize);
@@ -41,6 +42,7 @@ const CustomerKyc = CustomerKycModel(sequelize);
 const CustomerKycDocument = CustomerKycDocumentModel(sequelize);
 const CourierOrder = CourierOrderModel(sequelize);
 const ChatTemplate = ChatTemplateModel(sequelize);
+const MobileStock = MobileStockModel(sequelize);
 
 
 // Define associations
@@ -99,8 +101,11 @@ Vendor.hasMany(Model, { foreignKey: 'vendor_id', as: 'models', onDelete: 'CASCAD
 Model.belongsTo(Vendor, { foreignKey: 'vendor_id', as: 'vendor' });
 
 // Mobile associations
-Vendor.hasMany(Mobile, { foreignKey: 'vendor_id', as: 'mobiles', onDelete: 'CASCADE' });
-Mobile.belongsTo(Vendor, { foreignKey: 'vendor_id', as: 'vendor' });
+Mobile.hasMany(MobileStock, { foreignKey: 'mobile_id', as: 'stocks', onDelete: 'CASCADE' });
+MobileStock.belongsTo(Mobile, { foreignKey: 'mobile_id', as: 'mobile' });
+
+Vendor.hasMany(MobileStock, { foreignKey: 'vendor_id', as: 'stocks', onDelete: 'CASCADE' });
+MobileStock.belongsTo(Vendor, { foreignKey: 'vendor_id', as: 'vendor' });
 
 Brand.hasMany(Mobile, { foreignKey: 'brand_id', as: 'mobiles', onDelete: 'RESTRICT' });
 Mobile.belongsTo(Brand, { foreignKey: 'brand_id', as: 'brand' });
@@ -163,6 +168,7 @@ module.exports = {
 	CustomerKyc,
 	CustomerKycDocument,
 	CourierOrder,
-	ChatTemplate
+	ChatTemplate,
+	MobileStock
 };
 

@@ -1,20 +1,27 @@
-const { Mobile, Brand, Model, Storage, Ram, Transaction, Customer, sequelize } = require("../../models");
+const { Mobile, Brand, Model, Storage, Ram, Transaction, Customer, MobileStock, Vendor, BusinessDetail, sequelize } = require("../../models");
 const { Op } = require("sequelize");
 const { sendSuccess, sendError } = require("../../utils/responseHelper");
 
 /**
  * Format a database record to the API response shape compatible with frontend types.
  */
-function formatMobile(m) {
+function formatMobile(stockRecord) {
+	if (!stockRecord) return null;
+	const isMobileInstance = stockRecord.mobile_id === undefined && stockRecord.imei !== undefined;
+	const m = isMobileInstance ? stockRecord : (stockRecord.mobile || {});
+	const stock = isMobileInstance 
+		? (stockRecord.stocks && stockRecord.stocks.length ? stockRecord.stocks[0] : null)
+		: stockRecord;
+
 	const sortedTxs = m.transactions
 		? [...m.transactions].sort((a, b) => Number(b.id) - Number(a.id))
 		: [];
 
-	const purchaseTx = sortedTxs.find(tx => tx.type === "Purchase");
-	const saleTx = sortedTxs.find(tx => tx.type === "Sale");
+	const purchaseTx = sortedTxs.find(tx => tx.type === "Purchase" && (stock ? tx.vendor_id === stock.vendor_id : true));
+	const saleTx = sortedTxs.find(tx => tx.type === "Sale" && (stock ? tx.vendor_id === stock.vendor_id : true));
 
 	const purchasePrice = purchaseTx ? purchaseTx.amount : undefined;
-	const price = m.status === "Sold" && saleTx
+	const price = (stock ? stock.status : "Available") === "Sold" && saleTx
 		? saleTx.amount
 		: (purchasePrice ? Math.round(purchasePrice * 1.2) : 0);
 
@@ -33,12 +40,12 @@ function formatMobile(m) {
 		condition: m.condition,
 		price: price,
 		purchasePrice: purchasePrice,
-		repairingCost: m.repairing_cost || 0,
-		stock: 1, // Each listing is tracked by IMEI and has a stock count of 1
+		repairingCost: stock ? (stock.repairing_cost || 0) : 0,
+		stock: 1, 
 		batteryHealth: m.battery_health,
-		status: m.status,
+		status: stock ? stock.status : "Available",
 		description: m.description || "",
-		createdAt: m.created_at,
+		createdAt: stock ? stock.created_at : m.created_at,
 	};
 }
 
@@ -68,45 +75,40 @@ async function getMobiles(req, res) {
 			where.status = status;
 		}
 
+		const mobileInclude = {
+			model: Mobile,
+			as: "mobile",
+			include: [
+				{ model: Brand, as: "brand", attributes: ["name"] },
+				{ model: Model, as: "model", attributes: ["name"] },
+				{ model: Storage, as: "storage", attributes: ["value"] },
+				{ model: Ram, as: "ram", attributes: ["value"] },
+				{ model: Transaction, as: "transactions", attributes: ["id", "type", "amount", "vendor_id"] },
+			],
+			where: {}
+		};
+
 		if (condition && condition !== "All") {
-			where.condition = condition;
+			mobileInclude.where.condition = condition;
 		}
 
-		if (brand && brand !== "All") {
-			// supports both ID and name checks
-			if (isNaN(Number(brand))) {
-				// Search by name (via Brand association)
-			} else {
-				where.brand_id = Number(brand);
-			}
+		if (brand && brand !== "All" && !isNaN(Number(brand))) {
+			mobileInclude.where.brand_id = Number(brand);
 		}
 
-		if (model && model !== "All") {
-			if (isNaN(Number(model))) {
-				// Search by name (via Model association)
-			} else {
-				where.model_id = Number(model);
-			}
+		if (model && model !== "All" && !isNaN(Number(model))) {
+			mobileInclude.where.model_id = Number(model);
 		}
-
-		// Search filter (searches in color, imei, and associated brand/model names)
-		const include = [
-			{ model: Brand, as: "brand", attributes: ["name"] },
-			{ model: Model, as: "model", attributes: ["name"] },
-			{ model: Storage, as: "storage", attributes: ["value"] },
-			{ model: Ram, as: "ram", attributes: ["value"] },
-			{ model: Transaction, as: "transactions", attributes: ["id", "type", "amount"] },
-		];
 
 		if (search) {
 			const searchQuery = `%${search}%`;
 			where[Op.and] = [
 				{
 					[Op.or]: [
-						{ color: { [Op.like]: searchQuery } },
-						{ imei: { [Op.like]: searchQuery } },
-						{ "$brand.name$": { [Op.like]: searchQuery } },
-						{ "$model.name$": { [Op.like]: searchQuery } },
+						{ "$mobile.color$": { [Op.like]: searchQuery } },
+						{ "$mobile.imei$": { [Op.like]: searchQuery } },
+						{ "$mobile.brand.name$": { [Op.like]: searchQuery } },
+						{ "$mobile.model.name$": { [Op.like]: searchQuery } },
 					],
 				},
 			];
@@ -117,25 +119,25 @@ async function getMobiles(req, res) {
 		if (sortBy) {
 			const direction = sortOrder.toUpperCase() === "DESC" ? "DESC" : "ASC";
 			if (sortBy === "color") {
-				orderClause = [["color", direction]];
+				orderClause = [[{ model: Mobile, as: "mobile" }, "color", direction]];
 			} else if (sortBy === "imei") {
-				orderClause = [["imei", direction]];
+				orderClause = [[{ model: Mobile, as: "mobile" }, "imei", direction]];
 			} else if (sortBy === "condition") {
-				orderClause = [["condition", direction]];
+				orderClause = [[{ model: Mobile, as: "mobile" }, "condition", direction]];
 			} else if (sortBy === "batteryHealth") {
-				orderClause = [["battery_health", direction]];
+				orderClause = [[{ model: Mobile, as: "mobile" }, "battery_health", direction]];
 			} else if (sortBy === "createdAt") {
 				orderClause = [["created_at", direction]];
 			} else if (sortBy === "brand") {
-				orderClause = [[{ model: Brand, as: "brand" }, "name", direction]];
+				orderClause = [[{ model: Mobile, as: "mobile" }, { model: Brand, as: "brand" }, "name", direction]];
 			} else if (sortBy === "model") {
-				orderClause = [[{ model: Model, as: "model" }, "name", direction]];
+				orderClause = [[{ model: Mobile, as: "mobile" }, { model: Model, as: "model" }, "name", direction]];
 			}
 		}
 
-		const { count, rows } = await Mobile.findAndCountAll({
+		const { count, rows } = await MobileStock.findAndCountAll({
 			where,
-			include,
+			include: [mobileInclude],
 			order: (sortBy === "price" || sortBy === "purchasePrice") ? [["id", "DESC"]] : orderClause,
 			limit: Number(limit),
 			offset: Number(offset),
@@ -148,14 +150,14 @@ async function getMobiles(req, res) {
 
 		if (brand && isNaN(Number(brand)) && brand !== "All") {
 			filteredRows = filteredRows.filter(
-				(r) => r.brand && r.brand.name.toLowerCase() === brand.toLowerCase(),
+				(r) => r.mobile && r.mobile.brand && r.mobile.brand.name.toLowerCase() === brand.toLowerCase(),
 			);
 			finalCount = filteredRows.length;
 		}
 
 		if (model && isNaN(Number(model)) && model !== "All") {
 			filteredRows = filteredRows.filter(
-				(r) => r.model && r.model.name.toLowerCase() === model.toLowerCase(),
+				(r) => r.mobile && r.mobile.model && r.mobile.model.name.toLowerCase() === model.toLowerCase(),
 			);
 			finalCount = filteredRows.length;
 		}
@@ -191,23 +193,29 @@ async function getMobile(req, res) {
 		const { id } = req.params;
 		const vendorId = req.user.id;
 
-		const mobile = await Mobile.findOne({
-			where: { id, vendor_id: vendorId },
+		const stockRecord = await MobileStock.findOne({
+			where: { mobile_id: id, vendor_id: vendorId },
 			include: [
-				{ model: Brand, as: "brand", attributes: ["name"] },
-				{ model: Model, as: "model", attributes: ["name"] },
-				{ model: Storage, as: "storage", attributes: ["value"] },
-				{ model: Ram, as: "ram", attributes: ["value"] },
-				{ model: Transaction, as: "transactions", attributes: ["id", "type", "amount"] },
-			],
+				{
+					model: Mobile,
+					as: "mobile",
+					include: [
+						{ model: Brand, as: "brand", attributes: ["name"] },
+						{ model: Model, as: "model", attributes: ["name"] },
+						{ model: Storage, as: "storage", attributes: ["value"] },
+						{ model: Ram, as: "ram", attributes: ["value"] },
+						{ model: Transaction, as: "transactions", attributes: ["id", "type", "amount", "vendor_id"] },
+					],
+				}
+			]
 		});
 
-		if (!mobile) {
+		if (!stockRecord) {
 			return sendError(res, "Mobile not found.", {}, 404);
 		}
 
 		return sendSuccess(res, "Mobile retrieved successfully.", {
-			mobile: formatMobile(mobile),
+			mobile: formatMobile(stockRecord),
 		});
 	} catch (error) {
 		console.error("[MobileController] getMobile error:", error.message);
@@ -240,31 +248,108 @@ async function createMobile(req, res) {
 		} = req.body;
 
 		// Check duplicate IMEI if provided
+		let mobile;
 		if (imei) {
-			const existing = await Mobile.findOne({ where: { imei } });
+			const existing = await Mobile.findOne({ where: { imei }, transaction: t });
 			if (existing) {
-				await t.rollback();
-				return sendError(
-					res,
-					"A device with this IMEI is already registered in stock.",
-					{ imei: "IMEI already exists." },
-					409,
-				);
+				const activeStock = await MobileStock.findOne({
+					where: { mobile_id: existing.id, status: "Available" },
+					include: [
+						{
+							model: Vendor,
+							as: "vendor",
+							include: [{ model: BusinessDetail, as: "businessDetail" }]
+						}
+					],
+					transaction: t
+				});
+				if (activeStock) {
+					await t.rollback();
+					if (activeStock.vendor_id === vendorId) {
+						return sendError(
+							res,
+							"A device with this IMEI is already registered in your stock.",
+							{ imei: "IMEI already exists in your stock." },
+							409,
+						);
+					} else {
+						// Send notification to the original owner
+						const registeringVendor = await Vendor.findByPk(vendorId, {
+							include: [{ model: BusinessDetail, as: "businessDetail" }]
+						});
+						const registeringShopName = registeringVendor?.businessDetail?.shop_name || registeringVendor?.name || "A vendor";
+						
+						const notifBody = `Another vendor (Shop: ${registeringShopName}) attempted to register your active IMEI ${imei}.`;
+						const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+						
+						const { Notification } = require("../../models");
+						const socketHandler = require("../../utils/socketHandler");
+						
+						try {
+							const newNotif = await Notification.create({
+								vendor_id: activeStock.vendor_id,
+								type: "imei_conflict",
+								title: "IMEI Registration Conflict",
+								body: notifBody,
+								timestamp
+							});
+							
+							const io = socketHandler.getIo();
+							if (io) {
+								io.to(`vendor-${activeStock.vendor_id}`).emit('new_notification', {
+									id: `notif-${newNotif.id}`,
+									type: 'imei_conflict',
+									title: 'IMEI Registration Conflict',
+									body: notifBody,
+									timestamp
+								});
+							}
+						} catch (notifErr) {
+							console.error("[MobileController] failed to send conflict notification:", notifErr);
+						}
+
+						const owner = activeStock.vendor || {};
+						const ownerDetail = owner.businessDetail || {};
+
+						return res.status(409).json({
+							success: false,
+							message: "This IMEI is currently active in another vendor's stock.",
+							errors: { imei: "IMEI already exists in another vendor's stock." },
+							conflict: {
+								isOwnStock: false,
+								vendor: {
+									name: owner.name || "N/A",
+									shopName: ownerDetail.shop_name || "N/A",
+									phone: ownerDetail.phone || "N/A",
+									email: owner.email || "N/A"
+								}
+							}
+						});
+					}
+				}
+				mobile = existing;
 			}
 		}
 
-		const newMobile = await Mobile.create({
+		if (!mobile) {
+			mobile = await Mobile.create({
+				brand_id,
+				model_id,
+				storage_id,
+				ram_id,
+				color,
+				imei: imei || null,
+				condition,
+				battery_health: battery_health !== undefined ? battery_health : null,
+				description: description || null,
+			}, { transaction: t });
+		}
+
+		// Create stock record
+		const newStock = await MobileStock.create({
+			mobile_id: mobile.id,
 			vendor_id: vendorId,
-			brand_id,
-			model_id,
-			storage_id,
-			ram_id,
-			color,
-			imei: imei || null,
-			condition,
-			battery_health: battery_health !== undefined ? battery_health : null,
 			status: status || "Available",
-			description: description || null,
 			repairing_cost: repairing_cost ? Number(repairing_cost) : 0,
 		}, { transaction: t });
 
@@ -281,7 +366,7 @@ async function createMobile(req, res) {
 			vendor_id: vendorId,
 			partner_id: pId ? Number(pId) : null,
 			partner_type: pType,
-			mobile_id: newMobile.id,
+			mobile_id: mobile.id,
 			type: "Purchase",
 			amount: purchaseAmount,
 			date: new Date().toISOString().split("T")[0],
@@ -290,20 +375,29 @@ async function createMobile(req, res) {
 
 		await t.commit();
 
-		const fetched = await Mobile.findByPk(newMobile.id, {
+		const fetched = await MobileStock.findOne({
+			where: { id: newStock.id },
 			include: [
-				{ model: Brand, as: "brand", attributes: ["name"] },
-				{ model: Model, as: "model", attributes: ["name"] },
-				{ model: Storage, as: "storage", attributes: ["value"] },
-				{ model: Ram, as: "ram", attributes: ["value"] },
-				{ model: Transaction, as: "transactions", attributes: ["id", "type", "amount"] },
-			],
+				{
+					model: Mobile,
+					as: "mobile",
+					include: [
+						{ model: Brand, as: "brand", attributes: ["name"] },
+						{ model: Model, as: "model", attributes: ["name"] },
+						{ model: Storage, as: "storage", attributes: ["value"] },
+						{ model: Ram, as: "ram", attributes: ["value"] },
+						{ model: Transaction, as: "transactions", attributes: ["id", "type", "amount", "vendor_id"] },
+					],
+				}
+			]
 		});
 
 		// Trigger requirements alerts matching
-		checkAndAlertRequirements(fetched, vendorId).catch(err => {
-			console.error("[MobileController] checkAndAlertRequirements error:", err);
-		});
+		if (fetched && fetched.mobile) {
+			checkAndAlertRequirements(fetched.mobile, vendorId).catch(err => {
+				console.error("[MobileController] checkAndAlertRequirements error:", err);
+			});
+		}
 
 		return sendSuccess(
 			res,
@@ -328,15 +422,17 @@ async function updateMobile(req, res) {
 		const vendorId = req.user.id;
 		const updates = { ...req.body };
 
-		// Check if mobile exists and belongs to this vendor
-		const mobile = await Mobile.findOne({
-			where: { id, vendor_id: vendorId },
+		// Check if mobile stock record exists and belongs to this vendor
+		const stockRecord = await MobileStock.findOne({
+			where: { mobile_id: id, vendor_id: vendorId },
+			include: [{ model: Mobile, as: "mobile" }],
 			transaction: t,
 		});
-		if (!mobile) {
+		if (!stockRecord) {
 			await t.rollback();
 			return sendError(res, "Mobile not found.", {}, 404);
 		}
+		const mobile = stockRecord.mobile;
 
 		// Check duplicate IMEI if updated
 		if (updates.imei && updates.imei !== mobile.imei) {
@@ -355,7 +451,7 @@ async function updateMobile(req, res) {
 			}
 		}
 
-		const allowedFields = [
+		const allowedMobileFields = [
 			"brand_id",
 			"model_id",
 			"storage_id",
@@ -364,21 +460,33 @@ async function updateMobile(req, res) {
 			"imei",
 			"condition",
 			"battery_health",
-			"status",
 			"description",
+		];
+		const allowedStockFields = [
+			"status",
 			"repairing_cost",
 		];
 
-		const filteredUpdates = {};
-		for (const field of allowedFields) {
+		const mobileUpdates = {};
+		for (const field of allowedMobileFields) {
 			if (updates[field] !== undefined) {
-				filteredUpdates[field] = updates[field];
+				mobileUpdates[field] = updates[field];
 			}
 		}
 
-		await Mobile.update(filteredUpdates, {
-			where: { id, vendor_id: vendorId },
-		}, { transaction: t });
+		const stockUpdates = {};
+		for (const field of allowedStockFields) {
+			if (updates[field] !== undefined) {
+				stockUpdates[field] = updates[field];
+			}
+		}
+
+		if (Object.keys(mobileUpdates).length > 0) {
+			await mobile.update(mobileUpdates, { transaction: t });
+		}
+		if (Object.keys(stockUpdates).length > 0) {
+			await stockRecord.update(stockUpdates, { transaction: t });
+		}
 
 		// If purchase_price is updated, update the most recent associated 'Purchase' transaction
 		if (updates.purchase_price !== undefined) {
@@ -416,14 +524,20 @@ async function updateMobile(req, res) {
 
 		await t.commit();
 
-		const updated = await Mobile.findOne({
-			where: { id, vendor_id: vendorId },
+		const updated = await MobileStock.findOne({
+			where: { mobile_id: id, vendor_id: vendorId },
 			include: [
-				{ model: Brand, as: "brand", attributes: ["name"] },
-				{ model: Model, as: "model", attributes: ["name"] },
-				{ model: Storage, as: "storage", attributes: ["value"] },
-				{ model: Ram, as: "ram", attributes: ["value"] },
-				{ model: Transaction, as: "transactions", attributes: ["id", "type", "amount"] },
+				{
+					model: Mobile,
+					as: "mobile",
+					include: [
+						{ model: Brand, as: "brand", attributes: ["name"] },
+						{ model: Model, as: "model", attributes: ["name"] },
+						{ model: Storage, as: "storage", attributes: ["value"] },
+						{ model: Ram, as: "ram", attributes: ["value"] },
+						{ model: Transaction, as: "transactions", attributes: ["id", "type", "amount", "vendor_id"] },
+					],
+				}
 			],
 		});
 
@@ -445,8 +559,8 @@ async function deleteMobile(req, res) {
 		const { id } = req.params;
 		const vendorId = req.user.id;
 
-		const affectedRows = await Mobile.destroy({
-			where: { id, vendor_id: vendorId },
+		const affectedRows = await MobileStock.destroy({
+			where: { mobile_id: id, vendor_id: vendorId },
 		});
 
 		if (affectedRows === 0) {
@@ -468,30 +582,29 @@ async function getMetrics(req, res) {
 		const vendorId = req.user.id;
 
 		// 1. Total unique models
-		const uniqueModelsResult = await Mobile.findOne({
+		const uniqueModelsResult = await MobileStock.findOne({
 			where: { vendor_id: vendorId },
+			include: [{ model: Mobile, as: "mobile", attributes: [] }],
 			attributes: [
-				[sequelize.fn("COUNT", sequelize.fn("DISTINCT", sequelize.col("model_id"))), "count"],
+				[sequelize.fn("COUNT", sequelize.fn("DISTINCT", sequelize.col("mobile.model_id"))), "count"],
 			],
 			raw: true,
 		});
 
 		// 2. Active Inventory units count
-		const activeStockResult = await Mobile.count({
+		const activeStockResult = await MobileStock.count({
 			where: { vendor_id: vendorId, status: "Available" },
 		});
 
 		// 3. Total units sold
-		const totalSoldResult = await Mobile.count({
+		const totalSoldResult = await MobileStock.count({
 			where: { vendor_id: vendorId, status: "Sold" },
 		});
 
 		// 4. IMEI Logged Count
-		const imeiLoggedResult = await Mobile.count({
-			where: {
-				vendor_id: vendorId,
-				imei: { [Op.ne]: null },
-			},
+		const imeiLoggedResult = await MobileStock.count({
+			where: { vendor_id: vendorId },
+			include: [{ model: Mobile, as: "mobile", where: { imei: { [Op.ne]: null } } }],
 		});
 
 		return sendSuccess(res, "Mobile metrics retrieved successfully.", {
