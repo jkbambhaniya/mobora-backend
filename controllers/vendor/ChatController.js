@@ -32,6 +32,7 @@ function formatSession(s) {
 		isGroup: s.is_group === true || s.is_group === 1,
 		groupName: s.group_name,
 		groupMembers: parsedMembers,
+		recipientVendorId: s.recipient_vendor_id,
 	};
 }
 

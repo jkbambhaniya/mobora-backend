@@ -139,6 +139,7 @@ async function getMobiles(req, res) {
 			order: (sortBy === "price" || sortBy === "purchasePrice") ? [["id", "DESC"]] : orderClause,
 			limit: Number(limit),
 			offset: Number(offset),
+			subQuery: false,
 		});
 
 		// Secondary check for filters on associated tables if string value matches are queried

@@ -123,6 +123,10 @@ async function getStats(req, res) {
 		const totalMobiles = await Mobile.count();
 		const totalRepairs = await Repair.count();
 		const totalTransactions = await Transaction.count();
+		const totalCustomers = await Customer.count({
+			distinct: true,
+			col: "phone"
+		});
 
 		return sendSuccess(res, "Admin stats retrieved successfully.", {
 			stats: {
@@ -132,7 +136,8 @@ async function getStats(req, res) {
 				inactiveVendors,
 				totalMobiles,
 				totalRepairs,
-				totalTransactions
+				totalTransactions,
+				totalCustomers
 			}
 		});
 	} catch (error) {

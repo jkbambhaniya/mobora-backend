@@ -338,6 +338,155 @@ async function shipCourierOrder(req, res) {
 			}, { transaction: t });
 
 			await t.commit();
+
+			// Send Notification and Chat Message asynchronously
+			try {
+				const buyer_id = order.buyer_id;
+				const amount = order.amount;
+				const mobile_id = order.seller_mobile_id;
+
+				const seller = await Vendor.findByPk(sellerId, {
+					include: [{ model: sequelize.models.BusinessDetail, as: "businessDetail" }]
+				});
+				const buyer = await Vendor.findByPk(buyer_id);
+				
+				const mobileDetails = await Mobile.findByPk(mobile_id, {
+					include: [
+						{ model: Brand, as: "brand", attributes: ["name"] },
+						{ model: Model, as: "model", attributes: ["name"] },
+						{ model: Storage, as: "storage", attributes: ["value"] },
+						{ model: Ram, as: "ram", attributes: ["value"] },
+					]
+				});
+
+				if (seller && buyer && mobileDetails) {
+					const sellerShopName = seller.businessDetail ? seller.businessDetail.shop_name : seller.name;
+					const deviceName = `${mobileDetails.brand ? mobileDetails.brand.name : ""} ${mobileDetails.model ? mobileDetails.model.name : ""} (${mobileDetails.storage ? mobileDetails.storage.value : ""}/${mobileDetails.ram ? mobileDetails.ram.value : ""})`;
+					const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+					// 1. Create Notification for Buyer
+					const notifBody = `${sellerShopName} has shipped your order for ${deviceName} via ${courier_name} (Tracking ID: ${tracking_id}).`;
+					const notif = await Notification.create({
+						vendor_id: buyer_id,
+						type: "courier_order",
+						title: "Order Shipped!",
+						body: notifBody,
+						timestamp
+					});
+
+					const io = socketHandler.getIo();
+					if (io) {
+						io.to(`vendor-${buyer_id}`).emit('new_notification', {
+							id: `notif-${notif.id}`,
+							type: 'courier_order',
+							title: 'Order Shipped!',
+							body: notifBody,
+							timestamp
+						});
+					}
+
+					// 2. Chat message
+					const chatIdSender = `chat-${sellerId}-${buyer_id}`;
+					const chatIdRecipient = `chat-${buyer_id}-${sellerId}`;
+
+					// Check/create chat session for Seller (Sender)
+					let sessionSender = await ChatSession.findOne({
+						where: { vendor_id: sellerId, recipient_vendor_id: buyer_id }
+					});
+					if (!sessionSender) {
+						const initials = buyer.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) || 'VD';
+						sessionSender = await ChatSession.create({
+							chat_id: chatIdSender,
+							vendor_id: sellerId,
+							recipient_vendor_id: buyer_id,
+							customer_name: buyer.name,
+							avatar: initials,
+							status: 'offline',
+							last_message: '',
+							unread_count: 0,
+							last_active: 'Just now',
+							notes: 'B2B Trade Partner'
+						});
+					}
+
+					// Check/create chat session for Buyer (Recipient)
+					let sessionRecipient = await ChatSession.findOne({
+						where: { vendor_id: buyer_id, recipient_vendor_id: sellerId }
+					});
+					if (!sessionRecipient) {
+						const initials = seller.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) || 'VD';
+						sessionRecipient = await ChatSession.create({
+							chat_id: chatIdRecipient,
+							vendor_id: buyer_id,
+							recipient_vendor_id: sellerId,
+							customer_name: seller.name,
+							avatar: initials,
+							status: 'offline',
+							last_message: '',
+							unread_count: 0,
+							last_active: 'Just now',
+							device_interest: sellerShopName,
+							notes: 'B2B Trade Partner'
+						});
+					}
+
+					const messageText = `I have shipped your courier order for ${deviceName} via ${courier_name} (Tracking ID: ${tracking_id}).`;
+
+					// Create messages
+					const msgSender = await Message.create({
+						chat_id: chatIdSender,
+						sender: 'vendor',
+						text: messageText,
+						timestamp,
+						status: 'sent'
+					});
+
+					const msgRecipient = await Message.create({
+						chat_id: chatIdRecipient,
+						sender: 'customer',
+						text: messageText,
+						timestamp,
+						status: 'unread'
+					});
+
+					// Update sessions
+					await ChatSession.update(
+						{ last_message: messageText, last_active: 'Just now' },
+						{ where: { chat_id: chatIdSender, vendor_id: sellerId } }
+					);
+
+					await ChatSession.update(
+						{ last_message: messageText, last_active: 'Just now', unread_count: sequelize.literal('unread_count + 1') },
+						{ where: { chat_id: chatIdRecipient, vendor_id: buyer_id } }
+					);
+
+					if (io) {
+						io.to(`chat-${chatIdSender}`).emit('receive_message', {
+							id: `m-${msgSender.id}`,
+							sender: 'vendor',
+							text: messageText,
+							timestamp,
+							status: 'sent'
+						});
+
+						io.to(`chat-${chatIdRecipient}`).emit('receive_message', {
+							id: `m-${msgRecipient.id}`,
+							sender: 'customer',
+							text: messageText,
+							timestamp,
+							status: 'unread'
+						});
+
+						const sessionsA = await socketHandler.fetchVendorSessions(sellerId);
+						const sessionsB = await socketHandler.fetchVendorSessions(buyer_id);
+						io.to(`vendor-${sellerId}`).emit('sessions_update', sessionsA);
+						io.to(`vendor-${buyer_id}`).emit('sessions_update', sessionsB);
+					}
+				}
+			} catch (err) {
+				console.error("[CourierOrderController] Failed to send ship chat notification:", err.message);
+			}
+
 			return sendSuccess(res, "Order shipped successfully with courier details.", { order });
 		} catch (shipErr) {
 			await t.rollback();
@@ -432,6 +581,155 @@ async function receiveCourierOrder(req, res) {
 
 
 		await t.commit();
+
+		// Send Notification and Chat Message asynchronously
+		try {
+			const seller_id = order.seller_id;
+			const amount = order.amount;
+			const mobile_id = order.seller_mobile_id;
+
+			const buyer = await Vendor.findByPk(buyerId, {
+				include: [{ model: sequelize.models.BusinessDetail, as: "businessDetail" }]
+			});
+			const seller = await Vendor.findByPk(seller_id);
+			
+			const mobileDetails = await Mobile.findByPk(mobile_id, {
+				include: [
+					{ model: Brand, as: "brand", attributes: ["name"] },
+					{ model: Model, as: "model", attributes: ["name"] },
+					{ model: Storage, as: "storage", attributes: ["value"] },
+					{ model: Ram, as: "ram", attributes: ["value"] },
+				]
+			});
+
+			if (seller && buyer && mobileDetails) {
+				const buyerShopName = buyer.businessDetail ? buyer.businessDetail.shop_name : buyer.name;
+				const deviceName = `${mobileDetails.brand ? mobileDetails.brand.name : ""} ${mobileDetails.model ? mobileDetails.model.name : ""} (${mobileDetails.storage ? mobileDetails.storage.value : ""}/${mobileDetails.ram ? mobileDetails.ram.value : ""})`;
+				const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+				// 1. Create Notification for Seller
+				const notifBody = `${buyerShopName} has received and confirmed delivery of the order for ${deviceName}.`;
+				const notif = await Notification.create({
+					vendor_id: seller_id,
+					type: "courier_order",
+					title: "Order Delivered!",
+					body: notifBody,
+					timestamp
+				});
+
+				const io = socketHandler.getIo();
+				if (io) {
+					io.to(`vendor-${seller_id}`).emit('new_notification', {
+						id: `notif-${notif.id}`,
+						type: 'courier_order',
+						title: 'Order Delivered!',
+						body: notifBody,
+						timestamp
+					});
+				}
+
+				// 2. Chat message
+				const chatIdSender = `chat-${buyerId}-${seller_id}`;
+				const chatIdRecipient = `chat-${seller_id}-${buyerId}`;
+
+				// Check/create chat session for Buyer (Sender)
+				let sessionSender = await ChatSession.findOne({
+					where: { vendor_id: buyerId, recipient_vendor_id: seller_id }
+				});
+				if (!sessionSender) {
+					const initials = seller.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) || 'VD';
+					sessionSender = await ChatSession.create({
+						chat_id: chatIdSender,
+						vendor_id: buyerId,
+						recipient_vendor_id: seller_id,
+						customer_name: seller.name,
+						avatar: initials,
+						status: 'offline',
+						last_message: '',
+						unread_count: 0,
+						last_active: 'Just now',
+						notes: 'B2B Trade Partner'
+					});
+				}
+
+				// Check/create chat session for Seller (Recipient)
+				let sessionRecipient = await ChatSession.findOne({
+					where: { vendor_id: seller_id, recipient_vendor_id: buyerId }
+				});
+				if (!sessionRecipient) {
+					const initials = buyer.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) || 'VD';
+					sessionRecipient = await ChatSession.create({
+						chat_id: chatIdRecipient,
+						vendor_id: seller_id,
+						recipient_vendor_id: buyerId,
+						customer_name: buyer.name,
+						avatar: initials,
+						status: 'offline',
+						last_message: '',
+						unread_count: 0,
+						last_active: 'Just now',
+						device_interest: buyerShopName,
+						notes: 'B2B Trade Partner'
+					});
+				}
+
+				const messageText = `I have received and confirmed the delivery of the courier order for ${deviceName}.`;
+
+				// Create messages
+				const msgSender = await Message.create({
+					chat_id: chatIdSender,
+					sender: 'vendor',
+					text: messageText,
+					timestamp,
+					status: 'sent'
+				});
+
+				const msgRecipient = await Message.create({
+					chat_id: chatIdRecipient,
+					sender: 'customer',
+					text: messageText,
+					timestamp,
+					status: 'unread'
+				});
+
+				// Update sessions
+				await ChatSession.update(
+					{ last_message: messageText, last_active: 'Just now' },
+					{ where: { chat_id: chatIdSender, vendor_id: buyerId } }
+				);
+
+				await ChatSession.update(
+					{ last_message: messageText, last_active: 'Just now', unread_count: sequelize.literal('unread_count + 1') },
+					{ where: { chat_id: chatIdRecipient, vendor_id: seller_id } }
+				);
+
+				if (io) {
+					io.to(`chat-${chatIdSender}`).emit('receive_message', {
+						id: `m-${msgSender.id}`,
+						sender: 'vendor',
+						text: messageText,
+						timestamp,
+						status: 'sent'
+					});
+
+					io.to(`chat-${chatIdRecipient}`).emit('receive_message', {
+						id: `m-${msgRecipient.id}`,
+						sender: 'customer',
+						text: messageText,
+						timestamp,
+						status: 'unread'
+					});
+
+					const sessionsA = await socketHandler.fetchVendorSessions(buyerId);
+					const sessionsB = await socketHandler.fetchVendorSessions(seller_id);
+					io.to(`vendor-${buyerId}`).emit('sessions_update', sessionsA);
+					io.to(`vendor-${seller_id}`).emit('sessions_update', sessionsB);
+				}
+			}
+		} catch (err) {
+			console.error("[CourierOrderController] Failed to send receive chat notification:", err.message);
+		}
+
 		return sendSuccess(res, "Order received successfully. Inventory and transactions updated.", { order });
 	} catch (error) {
 		await t.rollback();

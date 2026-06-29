@@ -968,7 +968,8 @@ async function fetchAdminSessions() {
         isGroup: isGroup,
         groupName: s.group_name,
         groupMembers: parsedMembers,
-        vendorId: s.vendor_id
+        vendorId: s.vendor_id,
+        recipientVendorId: s.recipient_vendor_id
       };
     });
   } catch (err) {
@@ -1074,7 +1075,8 @@ async function fetchVendorSessions(vendorId) {
         notes: s.notes,
         isGroup: s.is_group === true || s.is_group === 1,
         groupName: s.group_name,
-        groupMembers: parsedMembers
+        groupMembers: parsedMembers,
+        recipientVendorId: s.recipient_vendor_id
       };
     });
   } catch (err) {

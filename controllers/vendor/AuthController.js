@@ -1,6 +1,6 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const { Vendor, BusinessDetail } = require("../../models");
+const { Vendor, BusinessDetail, ChatTemplate } = require("../../models");
 const { sendSuccess, sendError } = require("../../utils/responseHelper");
 const {
 	registerSchema,
@@ -71,6 +71,20 @@ async function register(req, res) {
 			gst_enabled: true,
 			gst_rate: 18,
 		});
+
+		// Create default chat templates
+		const defaultTemplates = [
+			"Hello! Yes, this device is still available in our stock.",
+			"We offer a 7-day checking warranty and a 6-month store warranty on all certified pre-owned phones.",
+			"Could you share the specifications and condition of your exchange device so I can calculate the valuation?",
+			"Our store hours are 10:30 AM to 8:30 PM, Monday through Saturday. You are welcome to visit anytime!",
+		];
+		await Promise.all(defaultTemplates.map(text => 
+			ChatTemplate.create({
+				vendor_id: newVendor.id,
+				template_text: text
+			})
+		));
 
 		return sendSuccess(
 			res,

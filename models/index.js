@@ -18,6 +18,7 @@ const DeviceRequirementModel = require('./DeviceRequirement');
 const CustomerKycModel = require('./CustomerKyc');
 const CustomerKycDocumentModel = require('./CustomerKycDocument');
 const CourierOrderModel = require('./CourierOrder');
+const ChatTemplateModel = require('./ChatTemplate');
 
 
 const Vendor = VendorModel(sequelize);
@@ -39,6 +40,7 @@ const DeviceRequirement = DeviceRequirementModel(sequelize);
 const CustomerKyc = CustomerKycModel(sequelize);
 const CustomerKycDocument = CustomerKycDocumentModel(sequelize);
 const CourierOrder = CourierOrderModel(sequelize);
+const ChatTemplate = ChatTemplateModel(sequelize);
 
 
 // Define associations
@@ -74,6 +76,9 @@ BlacklistedMobile.belongsTo(Vendor, { foreignKey: 'vendor_id', as: 'vendor' });
 
 Vendor.hasMany(DeviceRequirement, { foreignKey: 'vendor_id', as: 'deviceRequirements', onDelete: 'CASCADE' });
 DeviceRequirement.belongsTo(Vendor, { foreignKey: 'vendor_id', as: 'vendor' });
+
+Vendor.hasMany(ChatTemplate, { foreignKey: 'vendor_id', as: 'chatTemplates', onDelete: 'CASCADE' });
+ChatTemplate.belongsTo(Vendor, { foreignKey: 'vendor_id', as: 'vendor' });
 
 Brand.hasMany(DeviceRequirement, { foreignKey: 'brand_id', as: 'deviceRequirements', onDelete: 'RESTRICT' });
 DeviceRequirement.belongsTo(Brand, { foreignKey: 'brand_id', as: 'brand' });
@@ -157,6 +162,7 @@ module.exports = {
 	DeviceRequirement,
 	CustomerKyc,
 	CustomerKycDocument,
-	CourierOrder
+	CourierOrder,
+	ChatTemplate
 };
 

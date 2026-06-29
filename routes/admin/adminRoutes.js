@@ -6,6 +6,7 @@ const specController = require('../../controllers/admin/SpecificationController'
 const customerController = require('../../controllers/admin/CustomerController');
 const blacklistController = require('../../controllers/admin/BlacklistController');
 const requirementController = require('../../controllers/admin/DeviceRequirementController');
+const courierController = require('../../controllers/admin/CourierOrderController');
 const { authenticateToken, requireRole } = require('../../middleware/authMiddleware');
 const { validateBody } = require('../../middleware/validationMiddleware');
 
@@ -72,5 +73,9 @@ router.put('/requirements/:id/status', ...adminAuth, requirementController.updat
 // ─── Chat Management ────────────────────────────────────────────────────────
 const adminChatRoutes = require('./adminChatRoutes');
 router.use('/chat', adminChatRoutes);
+
+// ─── Courier Shipment Management ───────────────────────────────────────────
+router.get('/courier', ...adminAuth, courierController.listCourierOrders);
+router.post('/courier/:id/cancel', ...adminAuth, courierController.cancelCourierOrder);
 
 module.exports = router;
