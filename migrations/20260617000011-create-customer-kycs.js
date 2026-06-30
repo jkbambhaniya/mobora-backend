@@ -2,60 +2,41 @@
 
 module.exports = {
 	up: async (queryInterface, Sequelize) => {
-		await queryInterface.createTable('customers', {
+		await queryInterface.createTable('customer_kycs', {
 			id: {
 				type: Sequelize.INTEGER,
 				autoIncrement: true,
 				primaryKey: true,
 				allowNull: false
 			},
-			vendor_id: {
+			customer_id: {
 				type: Sequelize.INTEGER,
 				allowNull: false,
+				unique: true,
 				references: {
-					model: 'vendors',
+					model: 'customers',
 					key: 'id'
 				},
 				onDelete: 'CASCADE'
 			},
-			name: {
-				type: Sequelize.STRING,
-				allowNull: false
-			},
-			email: {
-				type: Sequelize.STRING,
-				allowNull: true
-			},
-			phone: {
+			id_type: {
 				type: Sequelize.STRING(50),
-				allowNull: false
-			},
-			status: {
-				type: Sequelize.ENUM('Active', 'Inactive'),
-				defaultValue: 'Active'
-			},
-			address: {
-				type: Sequelize.TEXT,
 				allowNull: true
 			},
-			notes: {
-				type: Sequelize.TEXT,
+			id_number: {
+				type: Sequelize.STRING(100),
 				allowNull: true
 			},
-			profile_img: {
-				type: Sequelize.TEXT('long'),
+			kyc_status: {
+				type: Sequelize.ENUM("Pending", "Verified", "Rejected"),
+				defaultValue: "Verified"
+			},
+			kyc_document_img: {
+				type: Sequelize.TEXT("long"),
 				allowNull: true
 			},
-			total_orders: {
-				type: Sequelize.INTEGER,
-				defaultValue: 0
-			},
-			total_spent: {
-				type: Sequelize.INTEGER,
-				defaultValue: 0
-			},
-			joined_date: {
-				type: Sequelize.STRING(50),
+			verified_at: {
+				type: Sequelize.DATE,
 				allowNull: true
 			},
 			created_at: {
@@ -69,9 +50,11 @@ module.exports = {
 				defaultValue: Sequelize.literal('CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP')
 			}
 		});
+
+		await queryInterface.addIndex('customer_kycs', ['customer_id']);
 	},
 
 	down: async (queryInterface, Sequelize) => {
-		await queryInterface.dropTable('customers');
+		await queryInterface.dropTable('customer_kycs');
 	}
 };

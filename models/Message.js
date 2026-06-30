@@ -35,7 +35,7 @@ module.exports = (sequelize) => {
 			allowNull: true,
 		},
 		status: {
-			type: DataTypes.STRING(20),
+			type: DataTypes.ENUM('sent', 'delivered', 'read'),
 			defaultValue: 'sent',
 		},
 		attachment_type: {

@@ -15,7 +15,7 @@ module.exports = {
 				unique: true
 			},
 			status: {
-				type: Sequelize.STRING(50),
+				type: Sequelize.ENUM('pending', 'approved', 'rejected'),
 				defaultValue: 'pending'
 			},
 			created_at: {

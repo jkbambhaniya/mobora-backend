@@ -8,13 +8,19 @@ const onlineAdmins = new Map(); // maps adminId (number) -> Array of socket IDs
 
 async function updateVendorOnlineStatus(vendorId, status) {
   try {
-    // 1. Update status in chat_sessions where this vendor is the recipient
+    // 1. Update status in chat_sessions where this vendor is the recipient (for Vendor B2B)
     await ChatSession.update(
       { status },
       { where: { recipient_vendor_id: vendorId } }
     );
 
-    // 2. Find all vendors (owners of these sessions) who need to be notified
+    // 2. Update status in chat_sessions for admin support chat (where vendor is the owner/customer)
+    await ChatSession.update(
+      { status },
+      { where: { chat_id: `admin-chat-${vendorId}` } }
+    );
+
+    // 3. Find all vendors (owners of these sessions) who need to be notified
     const sessions = await ChatSession.findAll({
       where: { recipient_vendor_id: vendorId },
       attributes: ['vendor_id'],
@@ -22,13 +28,17 @@ async function updateVendorOnlineStatus(vendorId, status) {
       raw: true
     });
 
-    // 3. For each owner, fetch updated sessions and emit to their socket room
-    for (const session of sessions) {
-      const ownerId = session.vendor_id;
-      const updatedSessions = await fetchVendorSessions(ownerId);
-      if (io) {
+    // 4. For each owner, fetch updated sessions and emit to their socket room
+    if (io) {
+      for (const session of sessions) {
+        const ownerId = session.vendor_id;
+        const updatedSessions = await fetchVendorSessions(ownerId);
         io.to(`vendor-${ownerId}`).emit('sessions_update', updatedSessions);
       }
+
+      // 5. Fetch updated sessions for admin and emit to the admin room
+      const updatedAdminSessions = await fetchAdminSessions();
+      io.to('admin-room').emit('admin_sessions_update', updatedAdminSessions);
     }
   } catch (err) {
     console.error('[Socket] Failed to update vendor online status:', err.message);
@@ -952,6 +962,9 @@ async function fetchAdminSessions() {
         }
       }
 
+      const isVendorOnline = onlineVendors.has(s.vendor_id) && onlineVendors.get(s.vendor_id).length > 0;
+      const dynamicStatus = isGroup ? 'online' : (isVendorOnline ? 'online' : 'offline');
+
       return {
         id: s.chat_id,
         customerName: displayName,
@@ -959,7 +972,7 @@ async function fetchAdminSessions() {
         customerEmail: s.customer_email,
         avatar: avatarName,
         profileImg: profileImg,
-        status: s.status,
+        status: dynamicStatus,
         lastMessage: s.last_message,
         unreadCount: s.admin_unread_count || 0,
         lastActive: s.last_active,

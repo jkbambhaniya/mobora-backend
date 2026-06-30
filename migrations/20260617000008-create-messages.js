@@ -39,7 +39,7 @@ module.exports = {
 				allowNull: true
 			},
 			status: {
-				type: Sequelize.STRING(20),
+				type: Sequelize.ENUM('sent', 'delivered', 'read'),
 				defaultValue: 'sent'
 			},
 			attachment_type: {

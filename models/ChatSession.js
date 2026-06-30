@@ -38,7 +38,7 @@ module.exports = (sequelize) => {
 			allowNull: true,
 		},
 		status: {
-			type: DataTypes.STRING(20),
+			type: DataTypes.ENUM('online', 'offline'),
 			defaultValue: 'offline',
 		},
 		last_message: {

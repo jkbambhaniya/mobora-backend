@@ -2,33 +2,25 @@
 
 module.exports = {
 	up: async (queryInterface, Sequelize) => {
-		await queryInterface.createTable('vendors', {
+		await queryInterface.createTable('customer_kyc_documents', {
 			id: {
 				type: Sequelize.INTEGER,
 				autoIncrement: true,
 				primaryKey: true,
 				allowNull: false
 			},
-			name: {
-				type: Sequelize.STRING,
-				allowNull: false
-			},
-			email: {
-				type: Sequelize.STRING,
+			customer_id: {
+				type: Sequelize.INTEGER,
 				allowNull: false,
-				unique: true
+				references: {
+					model: 'customers',
+					key: 'id'
+				},
+				onDelete: 'CASCADE'
 			},
-			password: {
-				type: Sequelize.STRING,
+			document_path: {
+				type: Sequelize.STRING(255),
 				allowNull: false
-			},
-			status: {
-				type: Sequelize.ENUM('pending', 'active', 'inactive'),
-				defaultValue: 'pending'
-			},
-			profile_img: {
-				type: Sequelize.TEXT('long'),
-				allowNull: true
 			},
 			created_at: {
 				type: Sequelize.DATE,
@@ -41,9 +33,11 @@ module.exports = {
 				defaultValue: Sequelize.literal('CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP')
 			}
 		});
+
+		await queryInterface.addIndex('customer_kyc_documents', ['customer_id']);
 	},
 
 	down: async (queryInterface, Sequelize) => {
-		await queryInterface.dropTable('vendors');
+		await queryInterface.dropTable('customer_kyc_documents');
 	}
 };

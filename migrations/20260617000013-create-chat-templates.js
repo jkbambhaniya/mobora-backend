@@ -2,33 +2,25 @@
 
 module.exports = {
 	up: async (queryInterface, Sequelize) => {
-		await queryInterface.createTable('vendors', {
+		await queryInterface.createTable('chat_templates', {
 			id: {
 				type: Sequelize.INTEGER,
 				autoIncrement: true,
 				primaryKey: true,
 				allowNull: false
 			},
-			name: {
-				type: Sequelize.STRING,
-				allowNull: false
-			},
-			email: {
-				type: Sequelize.STRING,
+			vendor_id: {
+				type: Sequelize.INTEGER,
 				allowNull: false,
-				unique: true
+				references: {
+					model: 'vendors',
+					key: 'id'
+				},
+				onDelete: 'CASCADE'
 			},
-			password: {
-				type: Sequelize.STRING,
+			template_text: {
+				type: Sequelize.TEXT,
 				allowNull: false
-			},
-			status: {
-				type: Sequelize.ENUM('pending', 'active', 'inactive'),
-				defaultValue: 'pending'
-			},
-			profile_img: {
-				type: Sequelize.TEXT('long'),
-				allowNull: true
 			},
 			created_at: {
 				type: Sequelize.DATE,
@@ -41,9 +33,11 @@ module.exports = {
 				defaultValue: Sequelize.literal('CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP')
 			}
 		});
+
+		await queryInterface.addIndex('chat_templates', ['vendor_id']);
 	},
 
 	down: async (queryInterface, Sequelize) => {
-		await queryInterface.dropTable('vendors');
+		await queryInterface.dropTable('chat_templates');
 	}
 };

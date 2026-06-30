@@ -26,8 +26,8 @@ module.exports = (sequelize) => {
 				field: "id_number",
 			},
 			kyc_status: {
-				type: DataTypes.STRING(50),
-				defaultValue: "Pending",
+				type: DataTypes.ENUM("Pending", "Verified", "Rejected"),
+				defaultValue: "Verified",
 				field: "kyc_status",
 			},
 			kyc_document_img: {

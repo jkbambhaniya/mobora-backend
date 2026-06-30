@@ -413,7 +413,7 @@ async function createCustomer(req, res) {
 				customer_id: newCustomer.id,
 				id_type: idType || null,
 				id_number: idNumber || null,
-				kyc_status: "Pending",
+				kyc_status: "Verified",
 			});
 			await syncCustomerKycDocuments(newCustomer.id, kycDocumentImg);
 		}
@@ -506,15 +506,15 @@ async function updateCustomer(req, res) {
 				const kycUpdates = {};
 				if (idType !== undefined) kycUpdates.id_type = idType;
 				if (idNumber !== undefined) kycUpdates.id_number = idNumber;
-				// Reset status to Pending if document or ID changes
-				kycUpdates.kyc_status = "Pending";
+				// Reset status to Verified if document or ID changes
+				kycUpdates.kyc_status = "Verified";
 				await dbKyc.update(kycUpdates);
 			} else {
 				await CustomerKyc.create({
 					customer_id: id,
 					id_type: idType || null,
 					id_number: idNumber || null,
-					kyc_status: "Pending",
+					kyc_status: "Verified",
 				});
 			}
 
@@ -688,7 +688,7 @@ async function updateCustomerKyc(req, res) {
 		let kyc = await CustomerKyc.findOne({ where: { customer_id: id } });
 
 		if (kyc) {
-			const updates = { kyc_status: "Pending" };
+			const updates = { kyc_status: "Verified" };
 			if (idType) updates.id_type = idType;
 			if (idNumber) updates.id_number = idNumber;
 			await kyc.update(updates);
@@ -697,7 +697,7 @@ async function updateCustomerKyc(req, res) {
 				customer_id: id,
 				id_type: idType || null,
 				id_number: idNumber || null,
-				kyc_status: "Pending",
+				kyc_status: "Verified",
 			});
 		}
 

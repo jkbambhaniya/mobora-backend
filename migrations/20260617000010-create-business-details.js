@@ -2,7 +2,7 @@
 
 module.exports = {
 	up: async (queryInterface, Sequelize) => {
-		await queryInterface.createTable('customers', {
+		await queryInterface.createTable('business_details', {
 			id: {
 				type: Sequelize.INTEGER,
 				autoIncrement: true,
@@ -18,45 +18,33 @@ module.exports = {
 				},
 				onDelete: 'CASCADE'
 			},
-			name: {
-				type: Sequelize.STRING,
-				allowNull: false
-			},
-			email: {
+			shop_name: {
 				type: Sequelize.STRING,
 				allowNull: true
 			},
 			phone: {
 				type: Sequelize.STRING(50),
-				allowNull: false
-			},
-			status: {
-				type: Sequelize.ENUM('Active', 'Inactive'),
-				defaultValue: 'Active'
+				allowNull: true
 			},
 			address: {
 				type: Sequelize.TEXT,
 				allowNull: true
 			},
-			notes: {
+			payment_methods: {
 				type: Sequelize.TEXT,
 				allowNull: true
 			},
-			profile_img: {
-				type: Sequelize.TEXT('long'),
-				allowNull: true
+			gst_enabled: {
+				type: Sequelize.BOOLEAN,
+				defaultValue: true
 			},
-			total_orders: {
+			gst_rate: {
 				type: Sequelize.INTEGER,
-				defaultValue: 0
+				defaultValue: 18
 			},
-			total_spent: {
+			markup: {
 				type: Sequelize.INTEGER,
-				defaultValue: 0
-			},
-			joined_date: {
-				type: Sequelize.STRING(50),
-				allowNull: true
+				defaultValue: 20
 			},
 			created_at: {
 				type: Sequelize.DATE,
@@ -69,9 +57,11 @@ module.exports = {
 				defaultValue: Sequelize.literal('CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP')
 			}
 		});
+
+		await queryInterface.addIndex('business_details', ['vendor_id']);
 	},
 
 	down: async (queryInterface, Sequelize) => {
-		await queryInterface.dropTable('customers');
+		await queryInterface.dropTable('business_details');
 	}
 };

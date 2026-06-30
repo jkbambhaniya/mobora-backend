@@ -398,14 +398,14 @@ async function updateCustomer(req, res) {
 				const kycUpdates = {};
 				if (idType !== undefined) kycUpdates.id_type = idType;
 				if (idNumber !== undefined) kycUpdates.id_number = idNumber;
-				kycUpdates.kyc_status = "Pending";
+				kycUpdates.kyc_status = "Verified";
 				await dbKyc.update(kycUpdates);
 			} else {
 				await CustomerKyc.create({
 					customer_id: id,
 					id_type: idType || null,
 					id_number: idNumber || null,
-					kyc_status: "Pending",
+					kyc_status: "Verified",
 				});
 			}
 

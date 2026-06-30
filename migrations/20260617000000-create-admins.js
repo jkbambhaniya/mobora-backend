@@ -2,7 +2,7 @@
 
 module.exports = {
 	up: async (queryInterface, Sequelize) => {
-		await queryInterface.createTable('vendors', {
+		await queryInterface.createTable('admins', {
 			id: {
 				type: Sequelize.INTEGER,
 				autoIncrement: true,
@@ -22,10 +22,6 @@ module.exports = {
 				type: Sequelize.STRING,
 				allowNull: false
 			},
-			status: {
-				type: Sequelize.ENUM('pending', 'active', 'inactive'),
-				defaultValue: 'pending'
-			},
 			profile_img: {
 				type: Sequelize.TEXT('long'),
 				allowNull: true
@@ -44,6 +40,6 @@ module.exports = {
 	},
 
 	down: async (queryInterface, Sequelize) => {
-		await queryInterface.dropTable('vendors');
+		await queryInterface.dropTable('admins');
 	}
 };

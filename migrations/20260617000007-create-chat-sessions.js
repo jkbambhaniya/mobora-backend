@@ -40,7 +40,7 @@ module.exports = {
 				allowNull: true
 			},
 			status: {
-				type: Sequelize.STRING(20),
+				type: Sequelize.ENUM('online', 'offline'),
 				defaultValue: 'offline'
 			},
 			last_message: {
@@ -48,6 +48,10 @@ module.exports = {
 				allowNull: true
 			},
 			unread_count: {
+				type: Sequelize.INTEGER,
+				defaultValue: 0
+			},
+			admin_unread_count: {
 				type: Sequelize.INTEGER,
 				defaultValue: 0
 			},

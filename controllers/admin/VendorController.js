@@ -128,6 +128,37 @@ async function getStats(req, res) {
 			col: "phone"
 		});
 
+		// Dynamic 6-month growth calculation
+		const growth = [];
+		const now = new Date();
+		for (let i = 5; i >= 0; i--) {
+			const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+			const monthName = d.toLocaleString('en-US', { month: 'short' });
+			const endOfMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999);
+
+			const vendorsCount = await Vendor.count({
+				where: {
+					createdAt: {
+						[Op.lte]: endOfMonth
+					}
+				}
+			});
+
+			const mobilesCount = await Mobile.count({
+				where: {
+					createdAt: {
+						[Op.lte]: endOfMonth
+					}
+				}
+			});
+
+			growth.push({
+				name: monthName,
+				vendors: vendorsCount,
+				mobiles: mobilesCount
+			});
+		}
+
 		return sendSuccess(res, "Admin stats retrieved successfully.", {
 			stats: {
 				totalVendors,
@@ -137,7 +168,8 @@ async function getStats(req, res) {
 				totalMobiles,
 				totalRepairs,
 				totalTransactions,
-				totalCustomers
+				totalCustomers,
+				growth
 			}
 		});
 	} catch (error) {
