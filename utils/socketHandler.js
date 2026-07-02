@@ -135,7 +135,8 @@ function leaveAllChatRooms(socket) {
 
 function init(server, corsOptions) {
   io = new Server(server, {
-    cors: corsOptions
+    cors: corsOptions,
+    transports: ['websocket', 'polling']
   });
 
   io.on('connection', (socket) => {
