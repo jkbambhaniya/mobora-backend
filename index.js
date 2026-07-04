@@ -16,7 +16,9 @@ const PORT = process.env.PORT || 5000;
 const server = http.createServer(app);
 
 // 1. Setup global security headers
-app.use(helmet());
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" }
+}));
 app.use(cookieParser());
 
 // 2. Setup CORS (Restricted to the Next.js frontend origin)
