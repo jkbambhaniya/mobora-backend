@@ -127,7 +127,7 @@ async function deleteRequirement(req, res) {
 async function getMatchingDevices(req, res) {
 	try {
 		const vendorId = req.user.id;
-		const { Mobile, Brand, Model, Storage, Ram, Vendor, BusinessDetail } = require("../../models");
+		const { Mobile, Brand, Model, Storage, Ram, Vendor, BusinessDetail, MobileStock, Transaction } = require("../../models");
 		const { Op } = require("sequelize");
 
 		// Fetch all active requirements for this vendor
@@ -143,21 +143,30 @@ async function getMatchingDevices(req, res) {
 
 		for (const r of activeReqs) {
 			// Find devices matching this requirement from OTHER vendors
-			const devices = await Mobile.findAll({
+			const matchingStocks = await MobileStock.findAll({
 				where: {
-					brand_id: r.brand_id,
-					model_id: r.model_id,
-					storage_id: r.storage_id,
-					ram_id: r.ram_id,
 					status: "Available",
-					vendor_id: { [Op.ne]: vendorId },
-					...(r.color ? { color: { [Op.like]: `%${r.color}%` } } : {})
+					vendor_id: { [Op.ne]: vendorId }
 				},
 				include: [
-					{ model: Brand, as: "brand", attributes: ["name"] },
-					{ model: Model, as: "model", attributes: ["name"] },
-					{ model: Storage, as: "storage", attributes: ["value"] },
-					{ model: Ram, as: "ram", attributes: ["value"] },
+					{
+						model: Mobile,
+						as: "mobile",
+						where: {
+							brand_id: r.brand_id,
+							model_id: r.model_id,
+							storage_id: r.storage_id,
+							ram_id: r.ram_id,
+							...(r.color ? { color: { [Op.like]: `%${r.color}%` } } : {})
+						},
+						include: [
+							{ model: Brand, as: "brand", attributes: ["name"] },
+							{ model: Model, as: "model", attributes: ["name"] },
+							{ model: Storage, as: "storage", attributes: ["value"] },
+							{ model: Ram, as: "ram", attributes: ["value"] },
+							{ model: Transaction, as: "transactions", attributes: ["id", "type", "amount", "vendor_id"] },
+						]
+					},
 					{
 						model: Vendor,
 						as: "vendor",
@@ -167,8 +176,9 @@ async function getMatchingDevices(req, res) {
 				]
 			});
 
-			for (const m of devices) {
-				const purchaseTx = m.transactions ? m.transactions.find(tx => tx.type === "Purchase") : null;
+			for (const ms of matchingStocks) {
+				const m = ms.mobile || {};
+				const purchaseTx = m.transactions ? m.transactions.find(tx => tx.type === "Purchase" && tx.vendor_id === ms.vendor_id) : null;
 				const basePrice = purchaseTx ? purchaseTx.amount : 200; // fallback default
 				const sellingPrice = Math.round(basePrice * 1.2);
 
@@ -181,12 +191,12 @@ async function getMatchingDevices(req, res) {
 					color: m.color,
 					condition: m.condition,
 					price: sellingPrice,
-					status: m.status,
-					vendorName: m.vendor?.name || "Dealer",
-					vendorEmail: m.vendor?.email || "",
-					vendorPhone: m.vendor?.businessDetail?.phone || "",
-					shopName: m.vendor?.businessDetail?.shop_name || "B2B Shop",
-					vendorId: m.vendor?.id,
+					status: ms.status,
+					vendorName: ms.vendor?.name || "Dealer",
+					vendorEmail: ms.vendor?.email || "",
+					vendorPhone: ms.vendor?.businessDetail?.phone || "",
+					shopName: ms.vendor?.businessDetail?.shop_name || "B2B Shop",
+					vendorId: ms.vendor?.id,
 					matchedRequirementId: r.id
 				});
 			}
