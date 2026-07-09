@@ -22,10 +22,10 @@ module.exports = (sequelize) => {
                 type: DataTypes.STRING,
                 allowNull: true,
             },
-            vendor_id: {
-                type: DataTypes.INTEGER,
-                allowNull: true,
-                field: "vendor_id",
+            status: {
+                type: DataTypes.ENUM('pending', 'active', 'inactive'),
+                defaultValue: 'pending',
+                allowNull: false,
             },
         },
         {

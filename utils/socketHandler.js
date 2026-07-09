@@ -271,12 +271,24 @@ function init(server, corsOptions) {
 
             // Determine if the recipient is actively viewing this room
             let isRecipientViewing = false;
-            if (isSenderAdmin) {
-              const room = io.sockets.adapter.rooms.get(`chat-${chatId}`);
-              isRecipientViewing = room && room.size > 0;
-            } else {
-              const room = io.sockets.adapter.rooms.get(`chat-${chatId}`);
-              isRecipientViewing = room && room.size > 0;
+            const room = io.sockets.adapter.rooms.get(`chat-${chatId}`);
+            if (room) {
+              for (const socketId of room) {
+                const s = io.sockets.sockets.get(socketId);
+                if (s) {
+                  if (isSenderAdmin) {
+                    if (s.vendorId === targetVendorId) {
+                      isRecipientViewing = true;
+                      break;
+                    }
+                  } else {
+                    if (s.isAdmin) {
+                      isRecipientViewing = true;
+                      break;
+                    }
+                  }
+                }
+              }
             }
 
             const initialStatus = isRecipientViewing ? 'read' : 'unread';
@@ -308,23 +320,23 @@ function init(server, corsOptions) {
                 { where: { chat_id: chatId, vendor_id: targetVendorId } }
               );
 
-              // Notify Vendor if offline or not viewing
+              // Notify Vendor if not viewing
               if (!isRecipientViewing) {
+                const notifBody = attachment ? `📎 ${attachment.name}` : (text || 'Sent a message');
+                const notifBodyTrimmed = notifBody.length > 80 ? notifBody.slice(0, 80) + '…' : notifBody;
+
+                await Notification.create({
+                  vendor_id: targetVendorId,
+                  type: 'admin_message',
+                  title: 'New message from Administrator',
+                  body: notifBodyTrimmed,
+                  chat_id: chatId,
+                  sender_name: 'Administrator',
+                  timestamp
+                });
+
                 const isVendorOnline = onlineVendors.has(targetVendorId) && onlineVendors.get(targetVendorId).length > 0;
                 if (isVendorOnline) {
-                  const notifBody = attachment ? `📎 ${attachment.name}` : (text || 'Sent a message');
-                  const notifBodyTrimmed = notifBody.length > 80 ? notifBody.slice(0, 80) + '…' : notifBody;
-
-                  await Notification.create({
-                    vendor_id: targetVendorId,
-                    type: 'admin_message',
-                    title: 'New message from Administrator',
-                    body: notifBodyTrimmed,
-                    chat_id: chatId,
-                    sender_name: 'Administrator',
-                    timestamp
-                  });
-
                   io.to(`vendor-${targetVendorId}`).emit('new_notification', {
                     type: 'admin_message',
                     title: 'New message from Administrator',
@@ -655,24 +667,24 @@ function init(server, corsOptions) {
               const sessions = await fetchVendorSessions(memberId);
               io.to(`vendor-${memberId}`).emit('sessions_update', sessions);
 
-              // 5. Notify member if online but not viewing this group chat
+              // 5. Notify member if not viewing this group chat
               if (!isSender && !isViewing) {
+                const notifBody = attachment ? `📎 ${attachment.name}` : (text || 'Sent a message');
+                const bodyWithSender = `${senderName}: ${notifBody.length > 70 ? notifBody.slice(0, 70) + '…' : notifBody}`;
+                
+                // Persist to DB
+                await Notification.create({
+                  vendor_id: memberId,
+                  type: 'group_message',
+                  title: sessionCheck.group_name,
+                  body: bodyWithSender,
+                  chat_id: memberChatId,
+                  sender_name: senderName,
+                  timestamp
+                });
+
                 const isMemberOnline = onlineVendors.has(memberId) && onlineVendors.get(memberId).length > 0;
                 if (isMemberOnline) {
-                  const notifBody = attachment ? `📎 ${attachment.name}` : (text || 'Sent a message');
-                  const bodyWithSender = `${senderName}: ${notifBody.length > 70 ? notifBody.slice(0, 70) + '…' : notifBody}`;
-                  
-                  // Persist to DB
-                  await Notification.create({
-                    vendor_id: memberId,
-                    type: 'group_message',
-                    title: sessionCheck.group_name,
-                    body: bodyWithSender,
-                    chat_id: memberChatId,
-                    sender_name: senderName,
-                    timestamp
-                  });
-
                   io.to(`vendor-${memberId}`).emit('new_notification', {
                     type: 'group_message',
                     title: sessionCheck.group_name,
@@ -798,10 +810,10 @@ function init(server, corsOptions) {
           io.to(`vendor-${vendorId}`).emit('sessions_update', sessionsA);
           io.to(`vendor-${recipientVendorId}`).emit('sessions_update', sessionsB);
 
-          // 7. Notify recipient if online but NOT viewing the chat
+          // 7. Notify recipient if NOT viewing the chat
           const recipientRoom = io.sockets.adapter.rooms.get(`chat-${chatIdB}`);
           const recipientIsViewing = recipientRoom && recipientRoom.size > 0;
-          if (isRecipientOnline && !recipientIsViewing) {
+          if (!recipientIsViewing) {
             // Fetch sender name for notification
             const sender = await Vendor.findByPk(vendorId);
             const senderDisplayName = sender ? sender.name : 'A vendor';
@@ -819,13 +831,15 @@ function init(server, corsOptions) {
               timestamp
             });
 
-            io.to(`vendor-${recipientVendorId}`).emit('new_notification', {
-              type: 'vendor_message',
-              title: `New message from ${senderDisplayName}`,
-              body: notifBodyTrimmed,
-              chatId: chatIdB,
-              senderName: senderDisplayName
-            });
+            if (isRecipientOnline) {
+              io.to(`vendor-${recipientVendorId}`).emit('new_notification', {
+                type: 'vendor_message',
+                title: `New message from ${senderDisplayName}`,
+                body: notifBodyTrimmed,
+                chatId: chatIdB,
+                senderName: senderDisplayName
+              });
+            }
           }
 
         } else {

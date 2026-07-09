@@ -42,10 +42,11 @@ async function getAllSpecs(req, res) {
 	try {
 		const [brands, models, storages, rams] = await Promise.all([
 			Brand.findAll({
-				where: { status: "approved" },
+				where: { status: "active" },
 				order: [["name", "ASC"]]
 			}),
 			Model.findAll({
+				where: { status: "active" },
 				include: [{ model: Brand, as: 'brand', attributes: ['name'] }],
 				order: [
 					[{ model: Brand, as: 'brand' }, 'name', 'ASC'],
@@ -53,12 +54,12 @@ async function getAllSpecs(req, res) {
 				]
 			}),
 			Storage.findAll({
-				where: { status: "approved" },
-				order: [["value", "ASC"]]
+				where: { status: "active" },
+				order: [["order_by", "ASC"]]
 			}),
 			Ram.findAll({
-				where: { status: "approved" },
-				order: [["value", "ASC"]]
+				where: { status: "active" },
+				order: [["order_by", "ASC"]]
 			}),
 		]);
 
@@ -97,7 +98,7 @@ async function getBrands(req, res) {
 		const { search, page = 1, limit = 10, sortBy = "name", sortOrder = "asc" } = req.query;
 		const offset = (Number(page) - 1) * Number(limit);
 
-		const where = { status: 'approved' };
+		const where = { status: 'active' };
 		if (search) {
 			where.name = { [Op.like]: `%${search}%` };
 		}
@@ -150,7 +151,7 @@ async function createBrand(req, res) {
 		});
 
 		if (existing) {
-			if (existing.status === "approved") {
+			if (existing.status === "active") {
 				return sendError(
 					res,
 					"A brand with this name already exists.",
@@ -221,7 +222,7 @@ async function getModels(req, res) {
 	try {
 		const { search, brandId, page = 1, limit = 10, sortBy = "name", sortOrder = "asc" } = req.query;
 		const offset = (Number(page) - 1) * Number(limit);
-		const where = {};
+		const where = { status: 'active' };
 		const conditions = [];
 
 		if (brandId) {
@@ -260,7 +261,6 @@ async function getModels(req, res) {
 			id: m.id,
 			name: m.name,
 			brand_id: m.brand_id,
-			vendor_id: m.vendor_id,
 			brand_name: m.brand ? m.brand.name : '',
 			created_at: m.created_at
 		}));
@@ -286,7 +286,7 @@ async function createModel(req, res) {
 
 		// Verify brand exists and is approved
 		const brand = await Brand.findOne({
-			where: { id: brand_id, status: 'approved' }
+			where: { id: brand_id, status: 'active' }
 		});
 		if (!brand) {
 			return sendError(
@@ -306,31 +306,39 @@ async function createModel(req, res) {
 		});
 
 		if (existing) {
-			return sendError(
-				res,
-				"A model with this name already exists under this brand.",
-				{},
-				409,
-			);
+			if (existing.status === "active") {
+				return sendError(
+					res,
+					"A model with this name already exists under this brand.",
+					{},
+					409,
+				);
+			} else {
+				return sendError(
+					res,
+					"A request for this model has already been submitted and is pending approval.",
+					{},
+					409,
+				);
+			}
 		}
 
 		const newModel = await Model.create({
 			brand_id,
 			name: name.trim(),
 			slug: slugify(name),
-			vendor_id: req.user.id
+			status: 'pending'
 		});
 
 		const formattedModel = {
 			id: newModel.id,
 			name: newModel.name,
 			brand_id: newModel.brand_id,
-			vendor_id: newModel.vendor_id,
 			brand_name: brand.name,
 			created_at: newModel.created_at
 		};
 
-		return sendSuccess(res, "Model created successfully.", { model: formattedModel }, 201);
+		return sendSuccess(res, "Model request submitted successfully.", { model: formattedModel }, 201);
 	} catch (err) {
 		console.error("[SpecController] createModel error:", err.message);
 		return sendError(res, "Failed to create model.", {}, 500);
@@ -339,83 +347,12 @@ async function createModel(req, res) {
 
 async function updateModel(req, res) {
 	try {
-		const { id } = req.params;
-		const { name, brand_id } = req.body;
-
-		const model = await Model.findByPk(id, {
-			include: [{ model: Brand, as: 'brand', attributes: ['name'] }]
-		});
-		if (!model) return sendError(res, "Model not found.", {}, 404);
-
-		// Verify the model belongs to this vendor
-		if (model.vendor_id !== req.user.id) {
-			return sendError(
-				res,
-				"Forbidden: You do not have permission to edit this model.",
-				{},
-				403,
-			);
-		}
-
-		if (brand_id !== undefined) {
-			const brand = await Brand.findOne({
-				where: { id: brand_id, status: 'approved' }
-			});
-			if (!brand) {
-				return sendError(
-					res,
-					"Cannot associate model with a pending or non-existent brand.",
-					{},
-					400,
-				);
-			}
-		}
-
-		const targetName = name !== undefined ? name.trim() : model.name;
-		const targetBrandId = brand_id !== undefined ? brand_id : model.brand_id;
-
-		const existing = await Model.findOne({
-			where: {
-				brand_id: targetBrandId,
-				name: targetName,
-				id: { [Op.ne]: id }
-			}
-		});
-
-		if (existing) {
-			return sendError(
-				res,
-				"A model with this name already exists under this brand.",
-				{},
-				409,
-			);
-		}
-
-		const updates = {};
-		if (name !== undefined) {
-			updates.name = name.trim();
-			updates.slug = slugify(name);
-		}
-		if (brand_id !== undefined) updates.brand_id = brand_id;
-
-		await Model.update(updates, { where: { id } });
-
-		const updatedModel = await Model.findByPk(id, {
-			include: [{ model: Brand, as: 'brand', attributes: ['name'] }]
-		});
-
-		const formattedModel = {
-			id: updatedModel.id,
-			name: updatedModel.name,
-			brand_id: updatedModel.brand_id,
-			vendor_id: updatedModel.vendor_id,
-			brand_name: updatedModel.brand ? updatedModel.brand.name : '',
-			created_at: updatedModel.created_at
-		};
-
-		return sendSuccess(res, "Model updated successfully.", {
-			model: formattedModel,
-		});
+		return sendError(
+			res,
+			"Forbidden: Vendors do not have permission to edit models.",
+			{},
+			403,
+		);
 	} catch (err) {
 		console.error("[SpecController] updateModel error:", err.message);
 		return sendError(res, "Failed to update model.", {}, 500);
@@ -424,24 +361,12 @@ async function updateModel(req, res) {
 
 async function deleteModel(req, res) {
 	try {
-		const { id } = req.params;
-		const model = await Model.findByPk(id);
-		if (!model) return sendError(res, "Model not found.", {}, 404);
-
-		// Verify the model belongs to this vendor
-		if (model.vendor_id !== req.user.id) {
-			return sendError(
-				res,
-				"Forbidden: You do not have permission to delete this model.",
-				{},
-				403,
-			);
-		}
-
-		await Model.destroy({ where: { id } });
-		return sendSuccess(res, "Model deleted successfully.", {
-			success: true,
-		});
+		return sendError(
+			res,
+			"Forbidden: Vendors do not have permission to delete models.",
+			{},
+			403,
+		);
 	} catch (err) {
 		console.error("[SpecController] deleteModel error:", err.message);
 		return sendError(res, "Failed to delete model.", {}, 500);
@@ -457,13 +382,13 @@ async function getStorages(req, res) {
 		const { search, page = 1, limit = 10, sortBy = "value", sortOrder = "asc" } = req.query;
 		const offset = (Number(page) - 1) * Number(limit);
 
-		const where = { status: 'approved' };
+		const where = { status: 'active' };
 		if (search) {
 			where.value = { [Op.like]: `%${search}%` };
 		}
 
-		const allowedSort = { value: "value", created_at: "created_at" };
-		const col = allowedSort[sortBy] || "value";
+		const allowedSort = { value: "value", created_at: "created_at", order_by: "order_by" };
+		const col = allowedSort[sortBy] || "order_by";
 		const dir = sortOrder === "desc" ? "DESC" : "ASC";
 
 		const { count, rows } = await Storage.findAndCountAll({
@@ -496,7 +421,7 @@ async function createStorage(req, res) {
 		});
 
 		if (existing) {
-			if (existing.status === "approved") {
+			if (existing.status === "active") {
 				return sendError(
 					res,
 					"This storage option already exists.",
@@ -567,13 +492,13 @@ async function getRams(req, res) {
 		const { search, page = 1, limit = 10, sortBy = "value", sortOrder = "asc" } = req.query;
 		const offset = (Number(page) - 1) * Number(limit);
 
-		const where = { status: 'approved' };
+		const where = { status: 'active' };
 		if (search) {
 			where.value = { [Op.like]: `%${search}%` };
 		}
 
-		const allowedSort = { value: "value", created_at: "created_at" };
-		const col = allowedSort[sortBy] || "value";
+		const allowedSort = { value: "value", created_at: "created_at", order_by: "order_by" };
+		const col = allowedSort[sortBy] || "order_by";
 		const dir = sortOrder === "desc" ? "DESC" : "ASC";
 
 		const { count, rows } = await Ram.findAndCountAll({
@@ -606,7 +531,7 @@ async function createRam(req, res) {
 		});
 
 		if (existing) {
-			if (existing.status === "approved") {
+			if (existing.status === "active") {
 				return sendError(
 					res,
 					"This RAM option already exists.",

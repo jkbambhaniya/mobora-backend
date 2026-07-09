@@ -677,7 +677,7 @@ async function getVendors(req, res) {
 				{
 					model: BusinessDetail,
 					as: "businessDetail",
-					attributes: ["shop_name"],
+					attributes: ["shop_name", "phone"],
 				},
 			],
 			order: [["name", "ASC"]],
@@ -691,6 +691,7 @@ async function getVendors(req, res) {
 				email: json.email,
 				profile_img: json.profile_img,
 				shop_name: json.businessDetail ? json.businessDetail.shop_name : null,
+				phone: json.businessDetail ? json.businessDetail.phone : null,
 			};
 		});
 

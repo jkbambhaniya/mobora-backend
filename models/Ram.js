@@ -12,8 +12,13 @@ module.exports = (sequelize) => {
 			allowNull: false,
 			unique: true,
 		},
+		order_by: {
+			type: DataTypes.INTEGER,
+			allowNull: true,
+			field: 'order_by',
+		},
 		status: {
-			type: DataTypes.ENUM('pending', 'approved', 'rejected'),
+			type: DataTypes.ENUM('pending', 'active', 'inactive'),
 			defaultValue: 'pending',
 			allowNull: false,
 		},
@@ -22,6 +27,13 @@ module.exports = (sequelize) => {
 		underscored: true,
 		timestamps: true,
 		updatedAt: false,
+		hooks: {
+			afterCreate: async (ram, options) => {
+				if (!ram.order_by) {
+					await ram.update({ order_by: ram.id }, { transaction: options.transaction });
+				}
+			}
+		}
 	});
 
 	return Ram;

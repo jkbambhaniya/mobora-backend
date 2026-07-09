@@ -6,11 +6,11 @@ const { sendSuccess, sendError } = require("../../utils/responseHelper");
 // HELPER
 // ─────────────────────────────────────────────
 
-function buildPagination(query) {
+function buildPagination(query, defaultSortOrder = "desc") {
 	const page = Math.max(1, parseInt(query.page, 10) || 1);
 	const limit = Math.min(100, Math.max(1, parseInt(query.limit, 10) || 15));
 	const offset = (page - 1) * limit;
-	const sortOrder = (query.sortOrder || "desc").toUpperCase() === "ASC" ? "ASC" : "DESC";
+	const sortOrder = (query.sortOrder || defaultSortOrder).toUpperCase() === "ASC" ? "ASC" : "DESC";
 	return { page, limit, offset, sortOrder };
 }
 
@@ -24,7 +24,7 @@ async function listBrands(req, res) {
 		const { search, status, sortBy } = req.query;
 
 		const where = {};
-		if (status && ["pending", "approved", "rejected"].includes(status)) {
+		if (status && ["pending", "active", "inactive"].includes(status)) {
 			where.status = status;
 		}
 		if (search && search.trim()) {
@@ -61,8 +61,8 @@ async function updateBrandStatus(req, res) {
 		const { id } = req.params;
 		const { status } = req.body;
 
-		if (!["approved", "rejected"].includes(status)) {
-			return sendError(res, "Invalid status. Must be 'approved' or 'rejected'.", {}, 400);
+		if (!["active", "inactive"].includes(status)) {
+			return sendError(res, "Invalid status. Must be 'active' or 'inactive'.", {}, 400);
 		}
 
 		const brand = await Brand.findByPk(id);
@@ -101,19 +101,19 @@ async function deleteBrand(req, res) {
 
 async function listRams(req, res) {
 	try {
-		const { page, limit, offset, sortOrder } = buildPagination(req.query);
+		const { page, limit, offset, sortOrder } = buildPagination(req.query, "asc");
 		const { search, status, sortBy } = req.query;
 
 		const where = {};
-		if (status && ["pending", "approved", "rejected"].includes(status)) {
+		if (status && ["pending", "active", "inactive"].includes(status)) {
 			where.status = status;
 		}
 		if (search && search.trim()) {
 			where.value = { [Op.like]: `%${search.trim()}%` };
 		}
 
-		const allowedSort = { value: "value", created_at: "created_at", status: "status" };
-		const col = allowedSort[sortBy] || "created_at";
+		const allowedSort = { value: "value", created_at: "created_at", status: "status", order_by: "order_by" };
+		const col = allowedSort[sortBy] || "order_by";
 
 		const { count, rows } = await Ram.findAndCountAll({
 			where,
@@ -142,8 +142,8 @@ async function updateRamStatus(req, res) {
 		const { id } = req.params;
 		const { status } = req.body;
 
-		if (!["approved", "rejected"].includes(status)) {
-			return sendError(res, "Invalid status. Must be 'approved' or 'rejected'.", {}, 400);
+		if (!["active", "inactive"].includes(status)) {
+			return sendError(res, "Invalid status. Must be 'active' or 'inactive'.", {}, 400);
 		}
 
 		const ram = await Ram.findByPk(id);
@@ -182,19 +182,19 @@ async function deleteRam(req, res) {
 
 async function listStorages(req, res) {
 	try {
-		const { page, limit, offset, sortOrder } = buildPagination(req.query);
+		const { page, limit, offset, sortOrder } = buildPagination(req.query, "asc");
 		const { search, status, sortBy } = req.query;
 
 		const where = {};
-		if (status && ["pending", "approved", "rejected"].includes(status)) {
+		if (status && ["pending", "active", "inactive"].includes(status)) {
 			where.status = status;
 		}
 		if (search && search.trim()) {
 			where.value = { [Op.like]: `%${search.trim()}%` };
 		}
 
-		const allowedSort = { value: "value", created_at: "created_at", status: "status" };
-		const col = allowedSort[sortBy] || "created_at";
+		const allowedSort = { value: "value", created_at: "created_at", status: "status", order_by: "order_by" };
+		const col = allowedSort[sortBy] || "order_by";
 
 		const { count, rows } = await Storage.findAndCountAll({
 			where,
@@ -223,8 +223,8 @@ async function updateStorageStatus(req, res) {
 		const { id } = req.params;
 		const { status } = req.body;
 
-		if (!["approved", "rejected"].includes(status)) {
-			return sendError(res, "Invalid status. Must be 'approved' or 'rejected'.", {}, 400);
+		if (!["active", "inactive"].includes(status)) {
+			return sendError(res, "Invalid status. Must be 'active' or 'inactive'.", {}, 400);
 		}
 
 		const storage = await Storage.findByPk(id);
@@ -264,10 +264,13 @@ async function deleteStorage(req, res) {
 async function listModels(req, res) {
 	try {
 		const { page, limit, offset, sortOrder } = buildPagination(req.query);
-		const { search, brandId, sortBy } = req.query;
+		const { search, brandId, status, sortBy } = req.query;
 
 		const where = {};
 		if (brandId) where.brand_id = brandId;
+		if (status && ["pending", "active", "inactive"].includes(status)) {
+			where.status = status;
+		}
 		if (search && search.trim()) {
 			where.name = { [Op.like]: `%${search.trim()}%` };
 		}
@@ -279,7 +282,6 @@ async function listModels(req, res) {
 			where,
 			include: [
 				{ model: Brand, as: "brand", attributes: ["id", "name"] },
-				{ model: Vendor, as: "vendor", attributes: ["id", "name", "email", "profile_img"] },
 			],
 			order: [[col, sortOrder]],
 			limit,
@@ -292,10 +294,7 @@ async function listModels(req, res) {
 			slug: m.slug,
 			brand_id: m.brand_id,
 			brand_name: m.brand ? m.brand.name : "—",
-			vendor_id: m.vendor_id,
-			vendor_name: m.vendor ? m.vendor.name : "Global",
-			vendor_email: m.vendor ? m.vendor.email : null,
-			vendor_profile_img: m.vendor ? m.vendor.profile_img : null,
+			status: m.status,
 			created_at: m.created_at,
 		}));
 
@@ -311,6 +310,30 @@ async function listModels(req, res) {
 	} catch (err) {
 		console.error("[AdminSpec] listModels error:", err.message);
 		return sendError(res, "Failed to fetch models.", {}, 500);
+	}
+}
+
+async function updateModelStatus(req, res) {
+	try {
+		const { id } = req.params;
+		const { status } = req.body;
+
+		if (!["active", "inactive"].includes(status)) {
+			return sendError(res, "Invalid status. Must be 'active' or 'inactive'.", {}, 400);
+		}
+
+		const model = await Model.findByPk(id);
+		if (!model) {
+			return sendError(res, "Model not found.", {}, 404);
+		}
+
+		model.status = status;
+		await model.save();
+
+		return sendSuccess(res, `Model ${status} successfully.`, { model });
+	} catch (err) {
+		console.error("[AdminSpec] updateModelStatus error:", err.message);
+		return sendError(res, "Failed to update model status.", {}, 500);
 	}
 }
 
@@ -379,7 +402,6 @@ async function updateModel(req, res) {
 		const updated = await Model.findByPk(id, {
 			include: [
 				{ model: Brand, as: "brand", attributes: ["id", "name"] },
-				{ model: Vendor, as: "vendor", attributes: ["id", "name", "email"] },
 			],
 		});
 
@@ -389,9 +411,7 @@ async function updateModel(req, res) {
 			slug: updated.slug,
 			brand_id: updated.brand_id,
 			brand_name: updated.brand ? updated.brand.name : "—",
-			vendor_id: updated.vendor_id,
-			vendor_name: updated.vendor ? updated.vendor.name : "Global",
-			vendor_email: updated.vendor ? updated.vendor.email : null,
+			status: updated.status,
 			created_at: updated.created_at,
 		};
 
@@ -409,35 +429,73 @@ async function updateModel(req, res) {
 async function getSpecSummary(req, res) {
 	try {
 		const [
-			brandPending, brandApproved, brandRejected,
-			ramPending, ramApproved, ramRejected,
-			storagePending, storageApproved, storageRejected,
-			totalModels,
+			brandPending, brandActive, brandInactive,
+			ramPending, ramActive, ramInactive,
+			storagePending, storageActive, storageInactive,
+			modelPending, modelActive, modelInactive,
 		] = await Promise.all([
 			Brand.count({ where: { status: "pending" } }),
-			Brand.count({ where: { status: "approved" } }),
-			Brand.count({ where: { status: "rejected" } }),
+			Brand.count({ where: { status: "active" } }),
+			Brand.count({ where: { status: "inactive" } }),
 			Ram.count({ where: { status: "pending" } }),
-			Ram.count({ where: { status: "approved" } }),
-			Ram.count({ where: { status: "rejected" } }),
+			Ram.count({ where: { status: "active" } }),
+			Ram.count({ where: { status: "inactive" } }),
 			Storage.count({ where: { status: "pending" } }),
-			Storage.count({ where: { status: "approved" } }),
-			Storage.count({ where: { status: "rejected" } }),
-			Model.count(),
+			Storage.count({ where: { status: "active" } }),
+			Storage.count({ where: { status: "inactive" } }),
+			Model.count({ where: { status: "pending" } }),
+			Model.count({ where: { status: "active" } }),
+			Model.count({ where: { status: "inactive" } }),
 		]);
 
 		return sendSuccess(res, "Specification summary retrieved.", {
 			summary: {
-				brands: { pending: brandPending, approved: brandApproved, rejected: brandRejected },
-				rams: { pending: ramPending, approved: ramApproved, rejected: ramRejected },
-				storages: { pending: storagePending, approved: storageApproved, rejected: storageRejected },
-				models: { total: totalModels },
-				totalPending: brandPending + ramPending + storagePending,
+				brands: { pending: brandPending, active: brandActive, inactive: brandInactive },
+				rams: { pending: ramPending, active: ramActive, inactive: ramInactive },
+				storages: { pending: storagePending, active: storageActive, inactive: storageInactive },
+				models: { pending: modelPending, active: modelActive, inactive: modelInactive },
+				totalPending: brandPending + ramPending + storagePending + modelPending,
 			},
 		});
 	} catch (err) {
 		console.error("[AdminSpec] getSpecSummary error:", err.message);
 		return sendError(res, "Failed to fetch specification summary.", {}, 500);
+	}
+}
+
+async function reorderRams(req, res) {
+	try {
+		const { orders } = req.body;
+		if (!Array.isArray(orders)) {
+			return sendError(res, "Invalid payload. 'orders' must be an array.", {}, 400);
+		}
+
+		for (const item of orders) {
+			await Ram.update({ order_by: item.order_by }, { where: { id: item.id } });
+		}
+
+		return sendSuccess(res, "RAM options reordered successfully.");
+	} catch (err) {
+		console.error("[AdminSpec] reorderRams error:", err.message);
+		return sendError(res, "Failed to reorder RAM options.", {}, 500);
+	}
+}
+
+async function reorderStorages(req, res) {
+	try {
+		const { orders } = req.body;
+		if (!Array.isArray(orders)) {
+			return sendError(res, "Invalid payload. 'orders' must be an array.", {}, 400);
+		}
+
+		for (const item of orders) {
+			await Storage.update({ order_by: item.order_by }, { where: { id: item.id } });
+		}
+
+		return sendSuccess(res, "Storage options reordered successfully.");
+	} catch (err) {
+		console.error("[AdminSpec] reorderStorages error:", err.message);
+		return sendError(res, "Failed to reorder storage options.", {}, 500);
 	}
 }
 
@@ -453,6 +511,9 @@ module.exports = {
 	deleteStorage,
 	listModels,
 	updateModel,
+	updateModelStatus,
 	deleteModel,
 	getSpecSummary,
+	reorderRams,
+	reorderStorages,
 };

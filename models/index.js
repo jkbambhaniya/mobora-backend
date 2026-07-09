@@ -20,6 +20,7 @@ const CustomerKycDocumentModel = require('./CustomerKycDocument');
 const CourierOrderModel = require('./CourierOrder');
 const ChatTemplateModel = require('./ChatTemplate');
 const MobileStockModel = require('./MobileStock');
+const InvoiceModel = require('./Invoice');
 
 
 const Vendor = VendorModel(sequelize);
@@ -43,6 +44,7 @@ const CustomerKycDocument = CustomerKycDocumentModel(sequelize);
 const CourierOrder = CourierOrderModel(sequelize);
 const ChatTemplate = ChatTemplateModel(sequelize);
 const MobileStock = MobileStockModel(sequelize);
+const Invoice = InvoiceModel(sequelize);
 
 
 // Define associations
@@ -96,10 +98,6 @@ DeviceRequirement.belongsTo(Ram, { foreignKey: 'ram_id', as: 'ram' });
 
 Brand.hasMany(Model, { foreignKey: 'brand_id', as: 'models', onDelete: 'CASCADE' });
 Model.belongsTo(Brand, { foreignKey: 'brand_id', as: 'brand' });
-
-Vendor.hasMany(Model, { foreignKey: 'vendor_id', as: 'models', onDelete: 'CASCADE' });
-Model.belongsTo(Vendor, { foreignKey: 'vendor_id', as: 'vendor' });
-
 // Mobile associations
 Mobile.hasMany(MobileStock, { foreignKey: 'mobile_id', as: 'stocks', onDelete: 'CASCADE' });
 MobileStock.belongsTo(Mobile, { foreignKey: 'mobile_id', as: 'mobile' });
@@ -132,6 +130,19 @@ Transaction.belongsTo(Vendor, { foreignKey: 'partner_id', constraints: false, as
 
 Mobile.hasMany(Transaction, { foreignKey: 'mobile_id', as: 'transactions', onDelete: 'CASCADE' });
 Transaction.belongsTo(Mobile, { foreignKey: 'mobile_id', as: 'mobile' });
+
+// Invoice associations
+Vendor.hasMany(Invoice, { foreignKey: 'vendor_id', as: 'invoices', onDelete: 'CASCADE' });
+Invoice.belongsTo(Vendor, { foreignKey: 'vendor_id', as: 'vendor' });
+
+Transaction.hasOne(Invoice, { foreignKey: 'transaction_id', as: 'invoice', onDelete: 'SET NULL' });
+Invoice.belongsTo(Transaction, { foreignKey: 'transaction_id', as: 'transaction' });
+
+Customer.hasMany(Invoice, { foreignKey: 'partner_id', constraints: false, scope: { partner_type: 'Customer' }, as: 'invoices' });
+Invoice.belongsTo(Customer, { foreignKey: 'partner_id', constraints: false, as: 'customer' });
+
+Vendor.hasMany(Invoice, { foreignKey: 'partner_id', constraints: false, scope: { partner_type: 'Vendor' }, as: 'partnerInvoices' });
+Invoice.belongsTo(Vendor, { foreignKey: 'partner_id', constraints: false, as: 'partnerVendor' });
 
 // CourierOrder associations
 Vendor.hasMany(CourierOrder, { foreignKey: 'seller_id', as: 'salesOrders', onDelete: 'CASCADE' });
@@ -169,6 +180,7 @@ module.exports = {
 	CustomerKycDocument,
 	CourierOrder,
 	ChatTemplate,
-	MobileStock
+	MobileStock,
+	Invoice
 };
 

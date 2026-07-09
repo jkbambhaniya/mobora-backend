@@ -1,4 +1,4 @@
-const { Transaction, Mobile, Customer, Brand, Model, Storage, Ram, Vendor, BusinessDetail } = require("../../models");
+const { Transaction, Mobile, Customer, Brand, Model, Storage, Ram, Vendor, BusinessDetail, Invoice } = require("../../models");
 const { sendError } = require("../../utils/responseHelper");
 const { calculateMarginGst } = require("../../utils/gstHelper");
 const PDFDocument = require("pdfkit");
@@ -56,18 +56,24 @@ async function getTransactionInvoice(req, res) {
 	try {
 		const { id } = req.params;
 		const queryOptions = {
-			where: { id },
+			where: { transaction_id: id },
 			include: [
 				{
-					model: Mobile,
-					as: "mobile",
+					model: Transaction,
+					as: "transaction",
 					include: [
-						{ model: Brand, as: "brand", attributes: ["name"] },
-						{ model: Model, as: "model", attributes: ["name"] },
-						{ model: Storage, as: "storage", attributes: ["value"] },
-						{ model: Ram, as: "ram", attributes: ["value"] },
-						{ model: Transaction, as: "transactions", attributes: ["type", "amount"] },
-					],
+						{
+							model: Mobile,
+							as: "mobile",
+							include: [
+								{ model: Brand, as: "brand", attributes: ["name"] },
+								{ model: Model, as: "model", attributes: ["name"] },
+								{ model: Storage, as: "storage", attributes: ["value"] },
+								{ model: Ram, as: "ram", attributes: ["value"] },
+								{ model: Transaction, as: "transactions", attributes: ["type", "amount"] },
+							],
+						}
+					]
 				},
 				{
 					model: Customer,
@@ -102,11 +108,43 @@ async function getTransactionInvoice(req, res) {
 			queryOptions.where.vendor_id = req.user.id;
 		}
 
-		const tx = await Transaction.findOne(queryOptions);
+		let invoice = await Invoice.findOne(queryOptions);
 
-		if (!tx) {
-			return sendError(res, "Transaction not found.", {}, 404);
+		// If invoice doesn't exist, try to find the transaction and dynamically backfill the invoice
+		if (!invoice) {
+			const txOptions = {
+				where: { id }
+			};
+			if (req.user.role !== "admin") {
+				txOptions.where.vendor_id = req.user.id;
+			}
+			const tx = await Transaction.findOne(txOptions);
+			if (tx) {
+				const invoiceNumber = `INV-${tx.id.toString().padStart(5, "0")}`;
+				await Invoice.create({
+					invoice_number: invoiceNumber,
+					transaction_id: tx.id,
+					vendor_id: tx.vendor_id,
+					partner_id: tx.partner_id,
+					partner_type: tx.partner_type,
+					type: tx.type,
+					amount: tx.amount,
+					tax_amount: 0,
+					status: "Paid",
+					notes: tx.notes,
+					date: tx.date
+				});
+				// Re-fetch with full associations
+				invoice = await Invoice.findOne(queryOptions);
+			}
 		}
+
+		if (!invoice) {
+			return sendError(res, "Invoice not found.", {}, 404);
+		}
+
+		const tx = invoice;
+		tx.mobile = invoice.transaction ? invoice.transaction.mobile : null;
 
 		const doc = new PDFDocument({
 			margin: 50,
@@ -200,7 +238,7 @@ async function getTransactionInvoice(req, res) {
 		// Invoice details Section
 		doc.fontSize(10).font("Helvetica-Bold").text("RECEIPT DETAILS", 350, startY);
 		doc.fontSize(9.5).font("Helvetica")
-			.text(`Receipt No: #INV-${tx.id.toString().padStart(5, "0")}`, 350, startY + 16)
+			.text(`Receipt No: #${tx.invoice_number}`, 350, startY + 16)
 			.text(`Date: ${tx.date}`, 350, startY + 29)
 			.text(`Payment Status: Completed`, 350, startY + 42)
 			.text(`Transaction Type: ${tx.type}`, 350, startY + 55);
@@ -231,16 +269,23 @@ async function getTransactionInvoice(req, res) {
 		const condition = mobileData ? mobileData.condition : "N/A";
 		const battery = mobileData ? `${mobileData.battery_health}%` : "N/A";
 
-		const desc = `${brandName} ${modelName}\nSpecs: ${storage} / ${ram} | Color: ${color}`;
+		const isPlan = tx.type === "PlanPurchase";
+		const desc = isPlan 
+			? `Subscription Plan Purchase\n${tx.notes || "Mobora Vendor Plan"}`
+			: `${brandName} ${modelName}\nSpecs: ${storage} / ${ram} | Color: ${color}`;
 		
 		doc.text(desc, 60, itemY + 8, { width: 190 });
-		doc.font("Helvetica").fontSize(8).text(imei, 260, itemY + 8);
 		
-		if (imei && imei !== "N/A") {
-			drawCode39(doc, imei, 260, itemY + 20, { width: 0.4, height: 16 });
+		if (!isPlan) {
+			doc.font("Helvetica").fontSize(8).text(imei, 260, itemY + 8);
+			if (imei && imei !== "N/A") {
+				drawCode39(doc, imei, 260, itemY + 20, { width: 0.4, height: 16 });
+			}
+			doc.fontSize(8.5).text(`${condition} / BH: ${battery}`, 370, itemY + 15);
+		} else {
+			doc.font("Helvetica").fontSize(8.5).text("N/A", 260, itemY + 15);
+			doc.text("Active / 1 Month", 370, itemY + 15);
 		}
-		
-		doc.fontSize(8.5).text(`${condition} / BH: ${battery}`, 370, itemY + 15);
 		
 		doc.font("Helvetica-Bold")
 			.text(`INR ${Number(tx.amount).toLocaleString("en-IN")}.00`, 450, itemY + 15, { align: "right", width: 85 });

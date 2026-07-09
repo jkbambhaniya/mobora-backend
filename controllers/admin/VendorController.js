@@ -49,7 +49,7 @@ async function listVendors(req, res) {
 
 		const totalPages = Math.ceil(count / limitNum);
 
-		return sendSuccess(res, "Vendors retrieved successfully.", { 
+		return sendSuccess(res, "Dealers retrieved successfully.", { 
 			vendors: rows,
 			pagination: {
 				totalCount: count,
@@ -64,7 +64,7 @@ async function listVendors(req, res) {
 		console.error("[Admin Vendor] List error:", error.message);
 		return sendError(
 			res,
-			"An internal server error occurred while retrieving vendors.",
+			"An internal server error occurred while retrieving dealers.",
 			{},
 			500,
 		);
@@ -85,13 +85,13 @@ async function updateVendorStatus(req, res) {
 
 		const vendor = await Vendor.findByPk(id);
 		if (!vendor) {
-			return sendError(res, "Vendor not found.", {}, 404);
+			return sendError(res, "Dealer not found.", {}, 404);
 		}
 
 		vendor.status = status;
 		await vendor.save();
 
-		return sendSuccess(res, `Vendor status successfully updated to ${status}.`, {
+		return sendSuccess(res, `Dealer status successfully updated to ${status}.`, {
 			vendor: {
 				id: vendor.id,
 				name: vendor.name,
@@ -103,7 +103,7 @@ async function updateVendorStatus(req, res) {
 		console.error("[Admin Vendor] Status update error:", error.message);
 		return sendError(
 			res,
-			"An internal server error occurred while updating vendor status.",
+			"An internal server error occurred while updating dealer status.",
 			{},
 			500,
 		);
@@ -205,7 +205,7 @@ async function updateVendor(req, res) {
 			// Check if email is already taken by another vendor
 			const existing = await Vendor.findOne({ where: { email, id: { [Op.ne]: id } } });
 			if (existing) {
-				return sendError(res, "Email address is already in use by another vendor.", {}, 400);
+				return sendError(res, "Email address is already in use by another dealer.", {}, 400);
 			}
 			vendor.email = email;
 		}
@@ -231,10 +231,10 @@ async function updateVendor(req, res) {
 			include: [{ model: BusinessDetail, as: "businessDetail" }]
 		});
 
-		return sendSuccess(res, "Vendor updated successfully.", { vendor: updatedVendor });
+		return sendSuccess(res, "Dealer updated successfully.", { vendor: updatedVendor });
 	} catch (error) {
 		console.error("[Admin Vendor] Update error:", error.message);
-		return sendError(res, "An internal server error occurred while updating the vendor.", {}, 500);
+		return sendError(res, "An internal server error occurred while updating the dealer.", {}, 500);
 	}
 }
 
@@ -247,14 +247,14 @@ async function deleteVendor(req, res) {
 		const vendor = await Vendor.findByPk(id);
 
 		if (!vendor) {
-			return sendError(res, "Vendor not found.", {}, 404);
+			return sendError(res, "Dealer not found.", {}, 404);
 		}
 
 		await vendor.destroy();
-		return sendSuccess(res, "Vendor deleted successfully.", { id: Number(id) });
+		return sendSuccess(res, "Dealer deleted successfully.", { id: Number(id) });
 	} catch (error) {
 		console.error("[Admin Vendor] Delete error:", error.message);
-		return sendError(res, "An internal server error occurred while deleting the vendor.", {}, 500);
+		return sendError(res, "An internal server error occurred while deleting the dealer.", {}, 500);
 	}
 }
 
@@ -303,13 +303,13 @@ async function getVendorById(req, res) {
 		});
 
 		if (!vendor) {
-			return sendError(res, "Vendor not found.", {}, 404);
+			return sendError(res, "Dealer not found.", {}, 404);
 		}
 
-		return sendSuccess(res, "Vendor details retrieved successfully.", { vendor });
+		return sendSuccess(res, "Dealer details retrieved successfully.", { vendor });
 	} catch (error) {
 		console.error("[Admin Vendor] Fetch by ID error:", error.message);
-		return sendError(res, "An internal server error occurred while retrieving vendor details.", {}, 500);
+		return sendError(res, "An internal server error occurred while retrieving dealer details.", {}, 500);
 	}
 }
 

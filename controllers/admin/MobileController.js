@@ -67,7 +67,6 @@ async function listMobiles(req, res) {
 			limit = 10,
 		} = req.query;
 
-		const offset = (Number(page) - 1) * Number(limit);
 		const where = {};
 
 		// Filters on Mobile specification table
@@ -94,54 +93,54 @@ async function listMobiles(req, res) {
 			];
 		}
 
-		// Ordering
-		let orderClause = [["id", "DESC"]];
-		if (sortBy) {
-			const direction = sortOrder.toUpperCase() === "DESC" ? "DESC" : "ASC";
-			if (sortBy === "color") {
-				orderClause = [["color", direction]];
-			} else if (sortBy === "imei") {
-				orderClause = [["imei", direction]];
-			} else if (sortBy === "condition") {
-				orderClause = [["condition", direction]];
-			} else if (sortBy === "createdAt") {
-				orderClause = [["created_at", direction]];
-			} else if (sortBy === "brand") {
-				orderClause = [[{ model: Brand, as: "brand" }, "name", direction]];
-			} else if (sortBy === "model") {
-				orderClause = [[{ model: Model, as: "model" }, "name", direction]];
-			}
-		}
-
-		const { count, rows } = await Mobile.findAndCountAll({
+		// Find all matching groups
+		const rows = await Mobile.findAll({
 			where,
 			attributes: [
 				'brand_id',
 				'model_id',
-				'storage_id',
-				'ram_id',
-				'color',
 				[sequelize.fn('COUNT', sequelize.col('Mobile.id')), 'totalUnits'],
 				[sequelize.fn('MIN', sequelize.col('Mobile.id')), 'id'],
-				[sequelize.fn('MAX', sequelize.col('Mobile.condition')), 'condition'],
+				[sequelize.fn('MAX', sequelize.col('Mobile.created_at')), 'created_at'],
 			],
 			include: [
-				{ model: Brand, as: "brand", attributes: ["name"] },
-				{ model: Model, as: "model", attributes: ["name"] },
-				{ model: Storage, as: "storage", attributes: ["value"] },
-				{ model: Ram, as: "ram", attributes: ["value"] },
+				{ model: Brand, as: "brand", attributes: ["name", "slug"] },
+				{ model: Model, as: "model", attributes: ["name", "slug"] },
 			],
-			group: ['brand_id', 'model_id', 'storage_id', 'ram_id', 'color'],
-			order: orderClause,
-			limit: Number(limit),
-			offset: Number(offset),
+			group: ['brand_id', 'model_id'],
 			subQuery: false,
 		});
 
-		const totalCount = Array.isArray(count) ? count.length : count;
-
-		const formatted = rows.map(m => {
+		// Format and fetch stock stats for each model group
+		let formatted = await Promise.all(rows.map(async (m) => {
 			const data = m.get({ plain: true });
+
+			const mobileWhere = {
+				brand_id: m.brand_id,
+				model_id: m.model_id
+			};
+			if (condition && condition !== "All") {
+				mobileWhere.condition = condition;
+			}
+
+			const availableCount = await MobileStock.count({
+				include: [{
+					model: Mobile,
+					as: "mobile",
+					where: mobileWhere
+				}],
+				where: { status: "Available" }
+			});
+
+			const soldCount = await MobileStock.count({
+				include: [{
+					model: Mobile,
+					as: "mobile",
+					where: mobileWhere
+				}],
+				where: { status: "Sold" }
+			});
+
 			return {
 				id: data.id.toString(),
 				brand: m.brand ? m.brand.name : "",
@@ -150,22 +149,53 @@ async function listMobiles(req, res) {
 				model: m.model ? m.model.name : "",
 				modelId: m.model_id,
 				modelSlug: m.model?.slug || slugify(m.model?.name),
-				storage: m.storage ? m.storage.value : "",
-				storageId: m.storage_id,
-				ram: m.ram ? m.ram.value : "",
-				ramId: m.ram_id,
-				color: m.color || "",
-				condition: data.condition || "NEW",
 				totalUnits: Number(data.totalUnits) || 1,
-				createdAt: m.created_at,
+				availableUnits: availableCount,
+				soldUnits: soldCount,
+				createdAt: data.created_at || m.created_at,
 			};
-		});
+		}));
+
+		// Apply Sorting in memory
+		if (sortBy) {
+			const direction = sortOrder.toLowerCase() === "desc" ? -1 : 1;
+			formatted.sort((a, b) => {
+				let valA = "";
+				let valB = "";
+
+				if (sortBy === "brand") {
+					valA = a.brand.toLowerCase();
+					valB = b.brand.toLowerCase();
+				} else if (sortBy === "model") {
+					valA = a.model.toLowerCase();
+					valB = b.model.toLowerCase();
+				} else if (sortBy === "inHandStock" || sortBy === "availableUnits") {
+					valA = a.availableUnits;
+					valB = b.availableUnits;
+				} else if (sortBy === "soldStock" || sortBy === "soldUnits") {
+					valA = a.soldUnits;
+					valB = b.soldUnits;
+				} else if (sortBy === "createdAt") {
+					valA = new Date(a.createdAt).getTime();
+					valB = new Date(b.createdAt).getTime();
+				}
+
+				if (valA < valB) return -1 * direction;
+				if (valA > valB) return 1 * direction;
+				return 0;
+			});
+		}
+
+		// Apply Pagination in memory
+		const totalCount = formatted.length;
+		const offset = (Number(page) - 1) * Number(limit);
+		const paginated = formatted.slice(offset, offset + Number(limit));
 
 		return sendSuccess(res, "Mobiles list retrieved successfully.", {
-			mobiles: formatted,
+			mobiles: paginated,
 			pagination: {
 				totalCount: totalCount,
-				totalPages: Math.ceil(totalCount / limit),
+				totalPages: Math.ceil(totalCount / Number(limit)),
 				currentPage: Number(page),
 				limit: Number(limit),
 			}

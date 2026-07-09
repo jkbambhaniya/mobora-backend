@@ -1,4 +1,4 @@
-const { Transaction, Mobile, MobileStock, Customer, Brand, Model, Storage, Ram, Vendor, BusinessDetail, sequelize } = require("../../models");
+const { Transaction, Mobile, MobileStock, Customer, Brand, Model, Storage, Ram, Vendor, BusinessDetail, Invoice, sequelize } = require("../../models");
 const { Op } = require("sequelize");
 const { sendSuccess, sendError } = require("../../utils/responseHelper");
 const { calculateMarginGst } = require("../../utils/gstHelper");
@@ -249,7 +249,7 @@ async function createTransaction(req, res) {
 			}, { transaction: t });
 		}
 
-		if (!mobile) {
+		if (!mobile && type !== "PlanPurchase") {
 			await t.rollback();
 			return sendError(res, "Mobile listing not found.", {}, 404);
 		}
@@ -325,13 +325,57 @@ async function createTransaction(req, res) {
 				vendor_id: vendorId,
 				partner_id: resolvedPartnerId || null,
 				partner_type: resolvedPartnerType || "Customer",
-				mobile_id: mobile.id,
+				mobile_id: mobile ? mobile.id : null,
 				type,
 				amount,
 				date,
 				notes: notes || `${type} transaction recorded.`,
 			},
 			{ transaction: t },
+		);
+
+		// Calculate tax amount for invoice
+		let calculatedTax = 0;
+		if (type === "Sale" && mobile) {
+			const purchaseTx = await Transaction.findOne({
+				where: { mobile_id: mobile.id, type: "Purchase" },
+				transaction: t
+			});
+			const purchasePrice = purchaseTx ? Number(purchaseTx.amount) : undefined;
+			const stockRecord = await MobileStock.findOne({
+				where: { mobile_id: mobile.id, vendor_id: vendorId },
+				transaction: t
+			});
+			const repairingCost = stockRecord ? (stockRecord.repairing_cost || 0) : 0;
+			const netCostPrice = purchasePrice !== undefined ? (purchasePrice + repairingCost) : undefined;
+
+			const vendorObj = await Vendor.findByPk(vendorId, {
+				include: [{ model: BusinessDetail, as: "businessDetail" }],
+				transaction: t
+			});
+			const gstEnabled = (vendorObj && vendorObj.businessDetail) ? vendorObj.businessDetail.gst_enabled : true;
+			const gstRate = (vendorObj && vendorObj.businessDetail) ? vendorObj.businessDetail.gst_rate : 18;
+			const gstCalc = calculateMarginGst(amount, netCostPrice, type, gstEnabled, gstRate);
+			calculatedTax = gstCalc.gstAmount || 0;
+		}
+
+		// Create corresponding invoice record
+		const invoiceNumber = `INV-${newTransaction.id.toString().padStart(5, "0")}`;
+		await Invoice.create(
+			{
+				invoice_number: invoiceNumber,
+				transaction_id: newTransaction.id,
+				vendor_id: vendorId,
+				partner_id: resolvedPartnerId || null,
+				partner_type: resolvedPartnerType || "Customer",
+				type,
+				amount,
+				tax_amount: Math.round(calculatedTax),
+				status: "Paid",
+				notes: notes || `${type} invoice.`,
+				date,
+			},
+			{ transaction: t }
 		);
 
 		// Recalculate customer total orders and total spent if a customer is linked

@@ -1,13 +1,24 @@
 const { DataTypes } = require("sequelize");
 
 module.exports = (sequelize) => {
-	const Transaction = sequelize.define(
-		"Transaction",
+	const Invoice = sequelize.define(
+		"Invoice",
 		{
 			id: {
 				type: DataTypes.INTEGER,
 				autoIncrement: true,
 				primaryKey: true,
+			},
+			invoice_number: {
+				type: DataTypes.STRING(100),
+				allowNull: false,
+				unique: true,
+				field: "invoice_number",
+			},
+			transaction_id: {
+				type: DataTypes.INTEGER,
+				allowNull: true,
+				field: "transaction_id",
 			},
 			vendor_id: {
 				type: DataTypes.INTEGER,
@@ -21,14 +32,8 @@ module.exports = (sequelize) => {
 			},
 			partner_type: {
 				type: DataTypes.ENUM("Customer", "Vendor"),
-				allowNull: false,
-				defaultValue: "Customer",
-				field: "partner_type",
-			},
-			mobile_id: {
-				type: DataTypes.INTEGER,
 				allowNull: true,
-				field: "mobile_id",
+				field: "partner_type",
 			},
 			type: {
 				type: DataTypes.ENUM("Sale", "Purchase", "Exchange", "PlanPurchase"),
@@ -38,21 +43,32 @@ module.exports = (sequelize) => {
 				type: DataTypes.INTEGER,
 				allowNull: false,
 			},
-			date: {
-				type: DataTypes.STRING(50),
+			tax_amount: {
+				type: DataTypes.INTEGER,
 				allowNull: false,
+				defaultValue: 0,
+				field: "tax_amount",
+			},
+			status: {
+				type: DataTypes.ENUM("Paid", "Pending", "Cancelled"),
+				allowNull: false,
+				defaultValue: "Paid",
 			},
 			notes: {
 				type: DataTypes.TEXT,
 				allowNull: true,
 			},
+			date: {
+				type: DataTypes.STRING(50),
+				allowNull: false,
+			},
 		},
 		{
-			tableName: "transactions",
+			tableName: "invoices",
 			underscored: true,
 			timestamps: true,
 		},
 	);
 
-	return Transaction;
+	return Invoice;
 };
