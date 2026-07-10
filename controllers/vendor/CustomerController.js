@@ -8,7 +8,7 @@ const { saveBase64File } = require("../../utils/fileUploadHelper");
 /**
  * Format database record to API response shape
  */
-function formatCustomer(c) {
+function formatCustomer(c, vc) {
 	const kyc = c.kyc || {};
 	const docs = c.kycDocuments || [];
 	let documentUrls = docs.map(doc => {
@@ -32,9 +32,9 @@ function formatCustomer(c) {
 		email: c.email || "",
 		phone: c.phone,
 		status: c.status,
-		totalOrders: c.total_orders,
-		totalSpent: c.total_spent,
-		joinedDate: c.joined_date,
+		totalOrders: vc ? vc.total_orders : (c.total_orders || 0),
+		totalSpent: vc ? vc.total_spent : (c.total_spent || 0),
+		joinedDate: vc ? vc.joined_date : (c.joined_date || null),
 		address: c.address || "",
 		profileImg: c.profile_image_url || null,
 		purchases: [],
@@ -107,84 +107,78 @@ async function getCustomers(req, res) {
 		} = req.query;
 		const offset = (Number(page) - 1) * Number(limit);
 
-		const where = { vendor_id: vendorId };
+		const { VendorCustomer, Customer, CustomerKyc, CustomerKycDocument } = require("../../models");
 
-		// 1. Search filter
+		// Construct sorting
+		let order = [];
+		const direction = sortOrder === "desc" ? "DESC" : "ASC";
+		if (sortBy === "name") {
+			order = [[{ model: Customer, as: "customer" }, "name", direction]];
+		} else if (sortBy === "totalSpent") {
+			order = [["total_spent", direction]];
+		} else if (sortBy === "joinedDate") {
+			order = [["joined_date", direction]];
+		} else {
+			order = [["id", direction]];
+		}
+
+		// Filters for Customer
+		const customerWhere = {};
 		if (search) {
-			where[Op.or] = [
+			customerWhere[Op.or] = [
 				{ name: { [Op.like]: `%${search}%` } },
 				{ email: { [Op.like]: `%${search}%` } },
 				{ phone: { [Op.like]: `%${search}%` } },
 			];
 		}
-
-		// 2. Status filter
 		if (status && status !== "All") {
-			where.status = status;
+			customerWhere.status = status;
 		}
 
-		// 3. Spent filter
+		// Filters for VendorCustomer
+		const vendorCustomerWhere = { vendor_id: vendorId };
 		if (spent) {
 			if (spent === "High") {
-				where.total_spent = { [Op.gte]: 50000 };
+				vendorCustomerWhere.total_spent = { [Op.gte]: 50000 };
 			} else if (spent === "Low") {
-				where.total_spent = { [Op.lt]: 50000 };
+				vendorCustomerWhere.total_spent = { [Op.lt]: 50000 };
 			}
 		}
 
-		// 4. Sorting
-		let orderColumn = "id";
-		if (sortBy === "name") {
-			orderColumn = "name";
-		} else if (sortBy === "totalSpent") {
-			orderColumn = "total_spent";
-		} else if (sortBy === "joinedDate") {
-			orderColumn = "joined_date";
-		}
-		const direction = sortOrder === "desc" ? "DESC" : "ASC";
-
-		// Query customers with pagination
-		const { CustomerKyc, CustomerKycDocument } = require("../../models");
-		const { count, rows } = await Customer.findAndCountAll({
-			where,
-			order: [[orderColumn, direction]],
+		// Query VendorCustomer count & rows
+		const { count, rows } = await VendorCustomer.findAndCountAll({
+			where: vendorCustomerWhere,
+			order,
 			limit: Number(limit),
 			offset: Number(offset),
 			include: [
-				{ model: CustomerKyc, as: "kyc" },
-				{ model: CustomerKycDocument, as: "kycDocuments" },
+				{
+					model: Customer,
+					as: "customer",
+					where: customerWhere,
+					include: [
+						{ model: CustomerKyc, as: "kyc" },
+						{ model: CustomerKycDocument, as: "kycDocuments" },
+					],
+				},
 			],
 		});
 
-		// Query metrics (aggregate statistics independent of filters)
-		const metricsResult = await Customer.findOne({
+		// Query metrics
+		const totalCustomers = await VendorCustomer.count({ where: { vendor_id: vendorId } });
+		const activeCustomers = await VendorCustomer.count({
 			where: { vendor_id: vendorId },
-			attributes: [
-				[sequelize.fn("COUNT", sequelize.col("id")), "totalCustomers"],
-				[
-					sequelize.fn(
-						"SUM",
-						sequelize.literal(
-							"CASE WHEN status = 'Active' THEN 1 ELSE 0 END",
-						),
-					),
-					"activeCustomers",
-				],
-				[
-					sequelize.fn("SUM", sequelize.col("total_spent")),
-					"totalSpent",
-				],
-			],
-			raw: true,
+			include: [{ model: Customer, as: "customer", where: { status: "Active" } }]
 		});
+		const totalSpentResult = await VendorCustomer.sum("total_spent", { where: { vendor_id: vendorId } });
 
 		const metrics = {
-			totalCustomers: parseInt(metricsResult.totalCustomers || 0, 10),
-			activeCustomers: parseInt(metricsResult.activeCustomers || 0, 10),
-			totalSpent: parseInt(metricsResult.totalSpent || 0, 10),
+			totalCustomers,
+			activeCustomers,
+			totalSpent: parseInt(totalSpentResult || 0, 10),
 		};
 
-		const formatted = rows.map(formatCustomer);
+		const formatted = rows.map(r => formatCustomer(r.customer, r));
 		return sendSuccess(res, "Customers retrieved successfully.", {
 			customers: formatted,
 			total: count,
@@ -214,9 +208,19 @@ async function getCustomer(req, res) {
 		const { id } = req.params;
 		const vendorId = req.user.id;
 
-		const { CustomerKyc, CustomerKycDocument } = require("../../models");
+		const { VendorCustomer, CustomerKyc, CustomerKycDocument } = require("../../models");
+
+		// Verify association exists
+		const association = await VendorCustomer.findOne({
+			where: { customer_id: id, vendor_id: vendorId }
+		});
+
+		if (!association) {
+			return sendError(res, "Customer not found.", {}, 404);
+		}
+
 		const customer = await Customer.findOne({
-			where: { id, vendor_id: vendorId },
+			where: { id },
 			include: [
 				{ model: CustomerKyc, as: "kyc" },
 				{ model: CustomerKycDocument, as: "kycDocuments" },
@@ -323,7 +327,7 @@ async function getCustomer(req, res) {
 		});
 
 		// Sync values in db
-		await customer.update({
+		await association.update({
 			total_orders: totalOrders,
 			total_spent: totalSpent,
 		});
@@ -353,7 +357,7 @@ async function getCustomer(req, res) {
 			totalOrders,
 			totalSpent,
 			totalProfit,
-			joinedDate: customer.joined_date,
+			joinedDate: association.joined_date,
 			address: customer.address || "",
 			profileImg: customer.profile_image_url || null,
 			purchases,
@@ -383,17 +387,74 @@ async function getCustomer(req, res) {
 async function createCustomer(req, res) {
 	try {
 		const vendorId = req.user.id;
-		const { name, email, phone, status, address, idType, idNumber, kycDocumentImg } = req.body;
+		const { name, email, phone, status, address, idType, idNumber, kycDocumentImg, associateExisting } = req.body;
 		let profile_img = req.body.profile_img || req.body.profileImg || null;
 
+		// Check if customer with this phone already exists
+		let customer = await Customer.findOne({ where: { phone } });
+
+		if (customer) {
+			// Find if already associated with this vendor
+			const { VendorCustomer } = require("../../models");
+			const existingAssociation = await VendorCustomer.findOne({
+				where: { vendor_id: vendorId, customer_id: customer.id }
+			});
+
+			if (existingAssociation) {
+				return sendError(res, "Customer with this mobile number is already in your customer list.", {}, 400);
+			}
+
+			// If already exists globally but not associated with this vendor
+			if (associateExisting) {
+				// Create association
+				const formattedJoinedDate = new Date().toISOString().split("T")[0];
+				const association = await VendorCustomer.create({
+					vendor_id: vendorId,
+					customer_id: customer.id,
+					joined_date: formattedJoinedDate,
+					total_orders: 0,
+					total_spent: 0,
+				});
+
+				// Reload customer with KYC association
+				const { CustomerKyc, CustomerKycDocument } = require("../../models");
+				const reloaded = await Customer.findOne({
+					where: { id: customer.id },
+					include: [
+						{ model: CustomerKyc, as: "kyc" },
+						{ model: CustomerKycDocument, as: "kycDocuments" },
+					],
+				});
+
+				return sendSuccess(res, "Customer added to your list successfully.", {
+					customer: formatCustomer(reloaded, association),
+				});
+			} else {
+				// Return warning that customer exists globally
+				const { CustomerKyc, CustomerKycDocument } = require("../../models");
+				const reloaded = await Customer.findOne({
+					where: { id: customer.id },
+					include: [
+						{ model: CustomerKyc, as: "kyc" },
+						{ model: CustomerKycDocument, as: "kycDocuments" },
+					],
+				});
+
+				return sendSuccess(res, "Customer already exists in the system.", {
+					existsGlobally: true,
+					customer: formatCustomer(reloaded),
+				});
+			}
+		}
+
+		// Create new customer record if it doesn't exist
 		if (profile_img) {
 			profile_img = saveBase64File(profile_img, "customer");
 		}
 
 		const formattedJoinedDate = new Date().toISOString().split("T")[0];
-
-		const newCustomer = await Customer.create({
-			vendor_id: vendorId,
+		customer = await Customer.create({
+			vendor_id: vendorId, // Creator
 			name,
 			email: email || null,
 			phone,
@@ -401,27 +462,34 @@ async function createCustomer(req, res) {
 			address: address || null,
 			profile_img,
 			joined_date: formattedJoinedDate,
+		});
+
+		// Ensure association in vendor_customers table exists
+		const { VendorCustomer } = require("../../models");
+		const association = await VendorCustomer.create({
+			vendor_id: vendorId,
+			customer_id: customer.id,
+			joined_date: formattedJoinedDate,
 			total_orders: 0,
 			total_spent: 0,
 		});
 
 		// Save KYC if provided
-		let dbKyc = null;
 		if (idType || idNumber || kycDocumentImg) {
 			const { CustomerKyc } = require("../../models");
-			dbKyc = await CustomerKyc.create({
-				customer_id: newCustomer.id,
+			await CustomerKyc.create({
+				customer_id: customer.id,
 				id_type: idType || null,
 				id_number: idNumber || null,
 				kyc_status: "Verified",
 			});
-			await syncCustomerKycDocuments(newCustomer.id, kycDocumentImg);
+			await syncCustomerKycDocuments(customer.id, kycDocumentImg);
 		}
 
-		// Reload customer with KYC association so formatCustomer receives it
+		// Reload customer with KYC association
 		const { CustomerKyc, CustomerKycDocument } = require("../../models");
 		const reloaded = await Customer.findOne({
-			where: { id: newCustomer.id },
+			where: { id: customer.id },
 			include: [
 				{ model: CustomerKyc, as: "kyc" },
 				{ model: CustomerKycDocument, as: "kycDocuments" },
@@ -429,7 +497,7 @@ async function createCustomer(req, res) {
 		});
 
 		return sendSuccess(res, "Customer created successfully.", {
-			customer: formatCustomer(reloaded),
+			customer: formatCustomer(reloaded, association),
 		});
 	} catch (error) {
 		console.error(
@@ -474,8 +542,6 @@ async function updateCustomer(req, res) {
 			"status",
 			"address",
 			"profile_img",
-			"total_orders",
-			"total_spent",
 		];
 		const filteredUpdates = {};
 		for (const field of allowedFields) {
@@ -484,17 +550,20 @@ async function updateCustomer(req, res) {
 			}
 		}
 
-		await Customer.update(filteredUpdates, {
-			where: { id, vendor_id: vendorId },
+		// Verify association exists
+		const { VendorCustomer } = require("../../models");
+		const association = await VendorCustomer.findOne({
+			where: { customer_id: id, vendor_id: vendorId }
 		});
 
-		// Check if customer exists
-		const customer = await Customer.findOne({
-			where: { id, vendor_id: vendorId },
-		});
-		if (!customer) {
+		if (!association) {
 			return sendError(res, "Customer not found.", {}, 404);
 		}
+
+		// Update global customer details
+		await Customer.update(filteredUpdates, {
+			where: { id },
+		});
 
 		// Update KYC details if provided
 		const { idType, idNumber, kycDocumentImg } = updates;
@@ -525,7 +594,7 @@ async function updateCustomer(req, res) {
 
 		const { CustomerKyc, CustomerKycDocument } = require("../../models");
 		const updated = await Customer.findOne({
-			where: { id, vendor_id: vendorId },
+			where: { id },
 			include: [
 				{ model: CustomerKyc, as: "kyc" },
 				{ model: CustomerKycDocument, as: "kycDocuments" },
@@ -533,7 +602,7 @@ async function updateCustomer(req, res) {
 		});
 
 		return sendSuccess(res, "Customer updated successfully.", {
-			customer: formatCustomer(updated),
+			customer: formatCustomer(updated, association),
 		});
 	} catch (error) {
 		console.error(
@@ -557,8 +626,9 @@ async function deleteCustomer(req, res) {
 		const { id } = req.params;
 		const vendorId = req.user.id;
 
-		const affectedRows = await Customer.destroy({
-			where: { id, vendor_id: vendorId },
+		const { VendorCustomer } = require("../../models");
+		const affectedRows = await VendorCustomer.destroy({
+			where: { customer_id: id, vendor_id: vendorId },
 		});
 
 		if (affectedRows === 0) {
@@ -594,9 +664,10 @@ async function bulkDelete(req, res) {
 			return sendError(res, "Customer IDs list is required.", {}, 400);
 		}
 
-		const deletedCount = await Customer.destroy({
+		const { VendorCustomer } = require("../../models");
+		const deletedCount = await VendorCustomer.destroy({
 			where: {
-				id: { [Op.in]: ids },
+				customer_id: { [Op.in]: ids },
 				vendor_id: vendorId,
 			},
 		});
@@ -641,12 +712,26 @@ async function bulkUpdateStatus(req, res) {
 			);
 		}
 
+		const { VendorCustomer } = require("../../models");
+		// Find associated customer IDs from the requested list
+		const associations = await VendorCustomer.findAll({
+			where: {
+				customer_id: { [Op.in]: ids },
+				vendor_id: vendorId,
+			},
+			attributes: ["customer_id"],
+		});
+		const associatedIds = associations.map(a => a.customer_id);
+
+		if (associatedIds.length === 0) {
+			return sendSuccess(res, "Selected customers status updated successfully.", { updatedCount: 0 });
+		}
+
 		const [updatedCount] = await Customer.update(
 			{ status },
 			{
 				where: {
-					id: { [Op.in]: ids },
-					vendor_id: vendorId,
+					id: { [Op.in]: associatedIds },
 				},
 			},
 		);
@@ -679,12 +764,17 @@ async function updateCustomerKyc(req, res) {
 		const vendorId = req.user.id;
 		const { idType, idNumber, kycDocumentImg } = req.body;
 
-		const customer = await Customer.findOne({ where: { id, vendor_id: vendorId } });
+		const { VendorCustomer, CustomerKyc, CustomerKycDocument } = require("../../models");
+		const association = await VendorCustomer.findOne({ where: { customer_id: id, vendor_id: vendorId } });
+		if (!association) {
+			return sendError(res, "Customer not found.", {}, 404);
+		}
+
+		const customer = await Customer.findOne({ where: { id } });
 		if (!customer) {
 			return sendError(res, "Customer not found.", {}, 404);
 		}
 
-		const { CustomerKyc } = require("../../models");
 		let kyc = await CustomerKyc.findOne({ where: { customer_id: id } });
 
 		if (kyc) {
@@ -705,9 +795,8 @@ async function updateCustomerKyc(req, res) {
 			await syncCustomerKycDocuments(id, kycDocumentImg);
 		}
 
-		const { CustomerKycDocument } = require("../../models");
 		const updatedCustomer = await Customer.findOne({
-			where: { id, vendor_id: vendorId },
+			where: { id },
 			include: [
 				{ model: CustomerKyc, as: "kyc" },
 				{ model: CustomerKycDocument, as: "kycDocuments" },
@@ -715,7 +804,7 @@ async function updateCustomerKyc(req, res) {
 		});
 
 		return sendSuccess(res, "Customer KYC details updated.", {
-			customer: formatCustomer(updatedCustomer),
+			customer: formatCustomer(updatedCustomer, association),
 		});
 	} catch (error) {
 		console.error("[CustomerController] updateCustomerKyc error:", error.message);
@@ -731,12 +820,17 @@ async function approveCustomerKyc(req, res) {
 		const { id } = req.params;
 		const vendorId = req.user.id;
 
-		const customer = await Customer.findOne({ where: { id, vendor_id: vendorId } });
+		const { VendorCustomer, CustomerKyc, CustomerKycDocument } = require("../../models");
+		const association = await VendorCustomer.findOne({ where: { customer_id: id, vendor_id: vendorId } });
+		if (!association) {
+			return sendError(res, "Customer not found.", {}, 404);
+		}
+
+		const customer = await Customer.findOne({ where: { id } });
 		if (!customer) {
 			return sendError(res, "Customer not found.", {}, 404);
 		}
 
-		const { CustomerKyc } = require("../../models");
 		let kyc = await CustomerKyc.findOne({ where: { customer_id: id } });
 
 		if (!kyc) {
@@ -748,9 +842,8 @@ async function approveCustomerKyc(req, res) {
 			verified_at: new Date(),
 		});
 
-		const { CustomerKycDocument } = require("../../models");
 		const updatedCustomer = await Customer.findOne({
-			where: { id, vendor_id: vendorId },
+			where: { id },
 			include: [
 				{ model: CustomerKyc, as: "kyc" },
 				{ model: CustomerKycDocument, as: "kycDocuments" },
@@ -758,7 +851,7 @@ async function approveCustomerKyc(req, res) {
 		});
 
 		return sendSuccess(res, "Customer KYC approved and verified.", {
-			customer: formatCustomer(updatedCustomer),
+			customer: formatCustomer(updatedCustomer, association),
 		});
 	} catch (error) {
 		console.error("[CustomerController] approveCustomerKyc error:", error.message);
@@ -774,12 +867,17 @@ async function rejectCustomerKyc(req, res) {
 		const { id } = req.params;
 		const vendorId = req.user.id;
 
-		const customer = await Customer.findOne({ where: { id, vendor_id: vendorId } });
+		const { VendorCustomer, CustomerKyc, CustomerKycDocument } = require("../../models");
+		const association = await VendorCustomer.findOne({ where: { customer_id: id, vendor_id: vendorId } });
+		if (!association) {
+			return sendError(res, "Customer not found.", {}, 404);
+		}
+
+		const customer = await Customer.findOne({ where: { id } });
 		if (!customer) {
 			return sendError(res, "Customer not found.", {}, 404);
 		}
 
-		const { CustomerKyc } = require("../../models");
 		let kyc = await CustomerKyc.findOne({ where: { customer_id: id } });
 
 		if (!kyc) {
@@ -791,9 +889,8 @@ async function rejectCustomerKyc(req, res) {
 			verified_at: null,
 		});
 
-		const { CustomerKycDocument } = require("../../models");
 		const updatedCustomer = await Customer.findOne({
-			where: { id, vendor_id: vendorId },
+			where: { id },
 			include: [
 				{ model: CustomerKyc, as: "kyc" },
 				{ model: CustomerKycDocument, as: "kycDocuments" },
@@ -801,7 +898,7 @@ async function rejectCustomerKyc(req, res) {
 		});
 
 		return sendSuccess(res, "Customer KYC rejected.", {
-			customer: formatCustomer(updatedCustomer),
+			customer: formatCustomer(updatedCustomer, association),
 		});
 	} catch (error) {
 		console.error("[CustomerController] rejectCustomerKyc error:", error.message);

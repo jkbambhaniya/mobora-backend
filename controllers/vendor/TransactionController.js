@@ -381,7 +381,7 @@ async function createTransaction(req, res) {
 		// Recalculate customer total orders and total spent if a customer is linked
 		if (resolvedPartnerType === "Customer" && resolvedPartnerId) {
 			const customerTxs = await Transaction.findAll({
-				where: { partner_id: resolvedPartnerId, partner_type: "Customer" },
+				where: { partner_id: resolvedPartnerId, partner_type: "Customer", vendor_id: vendorId },
 				transaction: t,
 			});
 			let newTxsList = [...customerTxs];
@@ -400,10 +400,22 @@ async function createTransaction(req, res) {
 			const totalOrders = uniqueTxs.length;
 			const totalSpent = uniqueTxs.reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
 
-			await Customer.update(
-				{ total_orders: totalOrders, total_spent: totalSpent },
-				{ where: { id: resolvedPartnerId }, transaction: t }
-			);
+			const { VendorCustomer } = require("../../models");
+			const [association, created] = await VendorCustomer.findOrCreate({
+				where: { vendor_id: vendorId, customer_id: resolvedPartnerId },
+				defaults: {
+					total_orders: totalOrders,
+					total_spent: totalSpent,
+					joined_date: new Date().toISOString().split("T")[0]
+				},
+				transaction: t
+			});
+			if (!created) {
+				await association.update(
+					{ total_orders: totalOrders, total_spent: totalSpent },
+					{ transaction: t }
+				);
+			}
 		}
 
 		// Replicate V2V Direct Transactions
@@ -501,19 +513,31 @@ async function createTransaction(req, res) {
 	}
 }
 
-async function recalculateCustomerStats(customerId, t) {
-	if (!customerId) return;
+async function recalculateCustomerStats(customerId, vendorId, t) {
+	if (!customerId || !vendorId) return;
 	const customerTxs = await Transaction.findAll({
-		where: { partner_id: customerId, partner_type: "Customer" },
+		where: { partner_id: customerId, partner_type: "Customer", vendor_id: vendorId },
 		transaction: t,
 	});
 	const totalOrders = customerTxs.length;
 	const totalSpent = customerTxs.reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
 
-	await Customer.update(
-		{ total_orders: totalOrders, total_spent: totalSpent },
-		{ where: { id: customerId }, transaction: t }
-	);
+	const { VendorCustomer } = require("../../models");
+	const [association, created] = await VendorCustomer.findOrCreate({
+		where: { vendor_id: vendorId, customer_id: customerId },
+		defaults: {
+			total_orders: totalOrders,
+			total_spent: totalSpent,
+			joined_date: new Date().toISOString().split("T")[0],
+		},
+		transaction: t,
+	});
+	if (!created) {
+		await association.update(
+			{ total_orders: totalOrders, total_spent: totalSpent },
+			{ transaction: t }
+		);
+	}
 }
 
 async function updateTransaction(req, res) {
@@ -557,7 +581,7 @@ async function updateTransaction(req, res) {
 				}
 			} else {
 				const customer = await Customer.findOne({
-					where: { name: customer_name, vendor_id: vendorId },
+					where: { name: customer_name },
 					transaction: t,
 				});
 				if (customer) {
@@ -576,13 +600,13 @@ async function updateTransaction(req, res) {
 		}, { transaction: t });
 
 		if (oldPartnerType === "Customer" && oldPartnerId) {
-			await recalculateCustomerStats(oldPartnerId, t);
+			await recalculateCustomerStats(oldPartnerId, vendorId, t);
 		}
 
 		if (resolvedPartnerType === "Customer" && resolvedPartnerId && resolvedPartnerId !== oldPartnerId) {
-			await recalculateCustomerStats(resolvedPartnerId, t);
+			await recalculateCustomerStats(resolvedPartnerId, vendorId, t);
 		} else if (resolvedPartnerType === "Customer" && resolvedPartnerId && amount !== undefined) {
-			await recalculateCustomerStats(resolvedPartnerId, t);
+			await recalculateCustomerStats(resolvedPartnerId, vendorId, t);
 		}
 
 		await t.commit();

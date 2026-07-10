@@ -499,17 +499,175 @@ async function reorderStorages(req, res) {
 	}
 }
 
+async function createBrand(req, res) {
+	try {
+		const { name, status } = req.body;
+		if (!name || !name.trim()) {
+			return sendError(res, "Brand name is required.", {}, 400);
+		}
+
+		const existing = await Brand.findOne({
+			where: { name: name.trim() }
+		});
+
+		if (existing) {
+			return sendError(
+				res,
+				"A brand with this name already exists.",
+				{},
+				409,
+			);
+		}
+
+		const { slugify } = require("../../utils/stringHelper");
+		const brand = await Brand.create({
+			name: name.trim(),
+			slug: slugify(name),
+			status: status || 'active'
+		});
+
+		return sendSuccess(res, "Brand created successfully.", { brand }, 201);
+	} catch (err) {
+		console.error("[AdminSpec] createBrand error:", err.message);
+		return sendError(res, "Failed to create brand.", {}, 500);
+	}
+}
+
+async function createRam(req, res) {
+	try {
+		const { value, status } = req.body;
+		if (!value || !value.trim()) {
+			return sendError(res, "RAM value is required.", {}, 400);
+		}
+
+		const existing = await Ram.findOne({
+			where: { value: value.trim() }
+		});
+
+		if (existing) {
+			return sendError(
+				res,
+				"This RAM option already exists.",
+				{},
+				409,
+			);
+		}
+
+		const ram = await Ram.create({
+			value: value.trim(),
+			status: status || 'active'
+		});
+
+		return sendSuccess(res, "RAM option created successfully.", { ram }, 201);
+	} catch (err) {
+		console.error("[AdminSpec] createRam error:", err.message);
+		return sendError(res, "Failed to create RAM option.", {}, 500);
+	}
+}
+
+async function createStorage(req, res) {
+	try {
+		const { value, status } = req.body;
+		if (!value || !value.trim()) {
+			return sendError(res, "Storage value is required.", {}, 400);
+		}
+
+		const existing = await Storage.findOne({
+			where: { value: value.trim() }
+		});
+
+		if (existing) {
+			return sendError(
+				res,
+				"This storage option already exists.",
+				{},
+				409,
+			);
+		}
+
+		const storage = await Storage.create({
+			value: value.trim(),
+			status: status || 'active'
+		});
+
+		return sendSuccess(res, "Storage option created successfully.", { storage }, 201);
+	} catch (err) {
+		console.error("[AdminSpec] createStorage error:", err.message);
+		return sendError(res, "Failed to create storage option.", {}, 500);
+	}
+}
+
+async function createModel(req, res) {
+	try {
+		const { name, brand_id, status } = req.body;
+		if (!name || !name.trim()) {
+			return sendError(res, "Model name is required.", {}, 400);
+		}
+		if (!brand_id) {
+			return sendError(res, "Brand ID is required.", {}, 400);
+		}
+
+		const brand = await Brand.findByPk(brand_id);
+		if (!brand) {
+			return sendError(res, "Brand not found.", {}, 400);
+		}
+
+		const existing = await Model.findOne({
+			where: {
+				brand_id,
+				name: name.trim()
+			}
+		});
+
+		if (existing) {
+			return sendError(
+				res,
+				"A model with this name already exists under this brand.",
+				{},
+				409,
+			);
+		}
+
+		const { slugify } = require("../../utils/stringHelper");
+		const newModel = await Model.create({
+			brand_id,
+			name: name.trim(),
+			slug: slugify(name),
+			status: status || 'active'
+		});
+
+		const formatted = {
+			id: newModel.id,
+			name: newModel.name,
+			slug: newModel.slug,
+			brand_id: newModel.brand_id,
+			brand_name: brand.name,
+			status: newModel.status,
+			created_at: newModel.created_at
+		};
+
+		return sendSuccess(res, "Model created successfully.", { model: formatted }, 201);
+	} catch (err) {
+		console.error("[AdminSpec] createModel error:", err.message);
+		return sendError(res, "Failed to create model.", {}, 500);
+	}
+}
+
 module.exports = {
 	listBrands,
+	createBrand,
 	updateBrandStatus,
 	deleteBrand,
 	listRams,
+	createRam,
 	updateRamStatus,
 	deleteRam,
 	listStorages,
+	createStorage,
 	updateStorageStatus,
 	deleteStorage,
 	listModels,
+	createModel,
 	updateModel,
 	updateModelStatus,
 	deleteModel,
@@ -517,3 +675,4 @@ module.exports = {
 	reorderRams,
 	reorderStorages,
 };
+

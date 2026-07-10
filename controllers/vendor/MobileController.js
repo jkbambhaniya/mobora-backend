@@ -505,19 +505,31 @@ async function updateMobile(req, res) {
 				await latestPurchaseTx.update({ amount: purchaseAmount }, { transaction: t });
 
 				// Recalculate customer total spent if a customer is linked to this transaction
-				if (latestPurchaseTx.customer_id) {
+				if (latestPurchaseTx.partner_id && latestPurchaseTx.partner_type === 'Customer') {
+					const customerId = latestPurchaseTx.partner_id;
 					const customerTxs = await Transaction.findAll({
-						where: { customer_id: latestPurchaseTx.customer_id },
+						where: { partner_id: customerId, partner_type: "Customer", vendor_id: vendorId },
 						transaction: t,
 					});
+					const totalOrders = customerTxs.length;
 					const totalSpent = customerTxs.reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
-					await Customer.update(
-						{ total_spent: totalSpent },
-						{
-							where: { id: latestPurchaseTx.customer_id },
-							transaction: t,
-						}
-					);
+
+					const { VendorCustomer } = require("../../models");
+					const [association, created] = await VendorCustomer.findOrCreate({
+						where: { vendor_id: vendorId, customer_id: customerId },
+						defaults: {
+							total_orders: totalOrders,
+							total_spent: totalSpent,
+							joined_date: new Date().toISOString().split("T")[0]
+						},
+						transaction: t
+					});
+					if (!created) {
+						await association.update(
+							{ total_orders: totalOrders, total_spent: totalSpent },
+							{ transaction: t }
+						);
+					}
 				}
 			}
 		}

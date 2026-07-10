@@ -41,23 +41,27 @@ router.get('/specifications/summary', ...adminAuth, specController.getSpecSummar
 
 // Brands
 router.get('/specifications/brands', ...adminAuth, specController.listBrands);
+router.post('/specifications/brands', ...adminAuth, specController.createBrand);
 router.put('/specifications/brands/:id/status', ...adminAuth, specController.updateBrandStatus);
 router.delete('/specifications/brands/:id', ...adminAuth, specController.deleteBrand);
 
 // RAMs
 router.get('/specifications/rams', ...adminAuth, specController.listRams);
+router.post('/specifications/rams', ...adminAuth, specController.createRam);
 router.put('/specifications/rams/reorder', ...adminAuth, specController.reorderRams);
 router.put('/specifications/rams/:id/status', ...adminAuth, specController.updateRamStatus);
 router.delete('/specifications/rams/:id', ...adminAuth, specController.deleteRam);
 
 // Storages
 router.get('/specifications/storages', ...adminAuth, specController.listStorages);
+router.post('/specifications/storages', ...adminAuth, specController.createStorage);
 router.put('/specifications/storages/reorder', ...adminAuth, specController.reorderStorages);
 router.put('/specifications/storages/:id/status', ...adminAuth, specController.updateStorageStatus);
 router.delete('/specifications/storages/:id', ...adminAuth, specController.deleteStorage);
 
 // Models (device models)
 router.get('/specifications/models', ...adminAuth, specController.listModels);
+router.post('/specifications/models', ...adminAuth, specController.createModel);
 router.put('/specifications/models/:id', ...adminAuth, specController.updateModel);
 router.put('/specifications/models/:id/status', ...adminAuth, specController.updateModelStatus);
 router.delete('/specifications/models/:id', ...adminAuth, specController.deleteModel);

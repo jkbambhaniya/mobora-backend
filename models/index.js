@@ -21,6 +21,7 @@ const CourierOrderModel = require('./CourierOrder');
 const ChatTemplateModel = require('./ChatTemplate');
 const MobileStockModel = require('./MobileStock');
 const InvoiceModel = require('./Invoice');
+const VendorCustomerModel = require('./VendorCustomer');
 
 
 const Vendor = VendorModel(sequelize);
@@ -45,6 +46,7 @@ const CourierOrder = CourierOrderModel(sequelize);
 const ChatTemplate = ChatTemplateModel(sequelize);
 const MobileStock = MobileStockModel(sequelize);
 const Invoice = InvoiceModel(sequelize);
+const VendorCustomer = VendorCustomerModel(sequelize);
 
 
 // Define associations
@@ -61,6 +63,12 @@ CustomerKyc.belongsTo(Customer, { foreignKey: 'customer_id', as: 'customer' });
 
 Customer.hasMany(CustomerKycDocument, { foreignKey: 'customer_id', as: 'kycDocuments', onDelete: 'CASCADE' });
 CustomerKycDocument.belongsTo(Customer, { foreignKey: 'customer_id', as: 'customer' });
+
+// VendorCustomer associations
+Vendor.hasMany(VendorCustomer, { foreignKey: 'vendor_id', as: 'vendorCustomers', onDelete: 'CASCADE' });
+VendorCustomer.belongsTo(Vendor, { foreignKey: 'vendor_id', as: 'vendor' });
+Customer.hasMany(VendorCustomer, { foreignKey: 'customer_id', as: 'vendorCustomers', onDelete: 'CASCADE' });
+VendorCustomer.belongsTo(Customer, { foreignKey: 'customer_id', as: 'customer' });
 
 
 Vendor.hasMany(ChatSession, { foreignKey: 'vendor_id', as: 'chatSessions', onDelete: 'CASCADE' });
@@ -104,6 +112,9 @@ MobileStock.belongsTo(Mobile, { foreignKey: 'mobile_id', as: 'mobile' });
 
 Vendor.hasMany(MobileStock, { foreignKey: 'vendor_id', as: 'stocks', onDelete: 'CASCADE' });
 MobileStock.belongsTo(Vendor, { foreignKey: 'vendor_id', as: 'vendor' });
+
+Vendor.belongsToMany(Mobile, { through: MobileStock, foreignKey: 'vendor_id', otherKey: 'mobile_id', as: 'mobiles' });
+Mobile.belongsToMany(Vendor, { through: MobileStock, foreignKey: 'mobile_id', otherKey: 'vendor_id', as: 'vendors' });
 
 Brand.hasMany(Mobile, { foreignKey: 'brand_id', as: 'mobiles', onDelete: 'RESTRICT' });
 Mobile.belongsTo(Brand, { foreignKey: 'brand_id', as: 'brand' });
@@ -181,6 +192,7 @@ module.exports = {
 	CourierOrder,
 	ChatTemplate,
 	MobileStock,
-	Invoice
+	Invoice,
+	VendorCustomer
 };
 

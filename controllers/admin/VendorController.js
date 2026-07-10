@@ -268,16 +268,11 @@ async function getVendorById(req, res) {
 			include: [
 				{ model: BusinessDetail, as: "businessDetail" },
 				{
-					model: Model,
-					as: "models",
-					include: [{ model: Brand, as: "brand", attributes: ["name"] }]
-				},
-				{
 					model: Mobile,
 					as: "mobiles",
 					include: [
 						{ model: Brand, as: "brand", attributes: ["name"] },
-						{ model: Model, as: "model", attributes: ["name"] },
+						{ model: Model, as: "model", attributes: ["id", "name", "slug", "created_at"] },
 						{ model: Storage, as: "storage", attributes: ["value"] },
 						{ model: Ram, as: "ram", attributes: ["value"] },
 						{ model: Transaction, as: "transactions", attributes: ["id", "type", "amount"] }
@@ -306,7 +301,27 @@ async function getVendorById(req, res) {
 			return sendError(res, "Dealer not found.", {}, 404);
 		}
 
-		return sendSuccess(res, "Dealer details retrieved successfully.", { vendor });
+		// Dynamically construct models array from mobiles in inventory
+		const modelsMap = new Map();
+		if (vendor.mobiles) {
+			vendor.mobiles.forEach((mobile) => {
+				if (mobile.model) {
+					modelsMap.set(mobile.model.id, {
+						id: mobile.model.id,
+						name: mobile.model.name,
+						slug: mobile.model.slug,
+						brand_id: mobile.brand_id,
+						brand: mobile.brand ? { name: mobile.brand.name } : null,
+						created_at: mobile.model.created_at
+					});
+				}
+			});
+		}
+
+		const vendorJson = vendor.toJSON();
+		vendorJson.models = Array.from(modelsMap.values());
+
+		return sendSuccess(res, "Dealer details retrieved successfully.", { vendor: vendorJson });
 	} catch (error) {
 		console.error("[Admin Vendor] Fetch by ID error:", error.message);
 		return sendError(res, "An internal server error occurred while retrieving dealer details.", {}, 500);

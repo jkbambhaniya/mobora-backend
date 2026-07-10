@@ -23,6 +23,7 @@ module.exports = (sequelize) => {
 		phone: {
 			type: DataTypes.STRING(50),
 			allowNull: false,
+			unique: true,
 		},
 		status: {
 			type: DataTypes.ENUM('Active', 'Inactive'),
@@ -56,16 +57,6 @@ module.exports = (sequelize) => {
 			get() {
 				return this.profile_img;
 			}
-		},
-		total_orders: {
-			type: DataTypes.INTEGER,
-			defaultValue: 0,
-			field: 'total_orders',
-		},
-		total_spent: {
-			type: DataTypes.INTEGER,
-			defaultValue: 0,
-			field: 'total_spent',
 		},
 		joined_date: {
 			type: DataTypes.STRING(50),

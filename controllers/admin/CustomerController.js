@@ -30,8 +30,8 @@ function formatCustomer(c) {
 		email: c.email || "",
 		phone: c.phone,
 		status: c.status,
-		totalOrders: c.total_orders,
-		totalSpent: c.total_spent,
+		totalOrders: c.total_orders || 0,
+		totalSpent: c.total_spent || 0,
 		joinedDate: c.joined_date,
 		address: c.address || "",
 		profileImg: c.profile_image_url || null,
@@ -123,12 +123,34 @@ async function listCustomers(req, res) {
 		if (sortField === "name") {
 			order = [["name", orderDir]];
 		} else if (sortField === "totalSpent") {
-			order = [["total_spent", orderDir]];
+			order = [[sequelize.literal("total_spent"), orderDir]];
 		} else if (sortField === "joinedDate") {
 			order = [["joined_date", orderDir]];
 		}
 
 		const { count, rows } = await Customer.findAndCountAll({
+			attributes: {
+				include: [
+					[
+						sequelize.literal(`(
+							SELECT COUNT(*) 
+							FROM transactions AS t 
+							WHERE t.partner_id = Customer.id 
+							AND t.partner_type = 'Customer'
+						)`),
+						"total_orders"
+					],
+					[
+						sequelize.literal(`(
+							SELECT IFNULL(SUM(t.amount), 0) 
+							FROM transactions AS t 
+							WHERE t.partner_id = Customer.id 
+							AND t.partner_type = 'Customer'
+						)`),
+						"total_spent"
+					]
+				]
+			},
 			where: whereClause,
 			include: [
 				{
@@ -147,25 +169,14 @@ async function listCustomers(req, res) {
 		});
 
 		// Query global metrics for admin
-		const metricsResult = await Customer.findOne({
-			attributes: [
-				[sequelize.fn("COUNT", sequelize.col("id")), "totalCustomers"],
-				[
-					sequelize.fn(
-						"SUM",
-						sequelize.literal("CASE WHEN status = 'Active' THEN 1 ELSE 0 END"),
-					),
-					"activeCustomers",
-				],
-				[sequelize.fn("SUM", sequelize.col("total_spent")), "totalSpent"],
-			],
-			raw: true,
-		});
+		const totalCustomers = await Customer.count();
+		const activeCustomers = await Customer.count({ where: { status: "Active" } });
+		const totalSpentResult = await Transaction.sum("amount", { where: { partner_type: "Customer" } });
 
 		const metrics = {
-			totalCustomers: parseInt(metricsResult.totalCustomers || 0, 10),
-			activeCustomers: parseInt(metricsResult.activeCustomers || 0, 10),
-			totalSpent: parseInt(metricsResult.totalSpent || 0, 10),
+			totalCustomers,
+			activeCustomers,
+			totalSpent: parseInt(totalSpentResult || 0, 10),
 		};
 
 		const formatted = rows.map(formatCustomer);
@@ -297,11 +308,7 @@ async function getCustomerById(req, res) {
 			};
 		});
 
-		// Sync totalOrders and totalSpent
-		await customer.update({
-			total_orders: totalOrders,
-			total_spent: totalSpent
-		});
+		// Stats are calculated dynamically from transactions, no need to update customer record
 
 		const docs = customer.kycDocuments || [];
 		const documentUrls = docs.map(doc => {
