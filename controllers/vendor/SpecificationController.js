@@ -254,7 +254,8 @@ async function getModels(req, res) {
 			include: [{ model: Brand, as: 'brand', attributes: ['name'] }],
 			order: orderClause,
 			limit: Number(limit),
-			offset: Number(offset)
+			offset: Number(offset),
+			subQuery: false
 		});
 
 		const formattedRows = rows.map(m => ({

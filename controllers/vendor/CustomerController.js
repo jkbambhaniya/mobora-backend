@@ -151,6 +151,7 @@ async function getCustomers(req, res) {
 			order,
 			limit: Number(limit),
 			offset: Number(offset),
+			subQuery: false,
 			include: [
 				{
 					model: Customer,
@@ -406,6 +407,45 @@ async function createCustomer(req, res) {
 
 			// If already exists globally but not associated with this vendor
 			if (associateExisting) {
+				// Update global customer details if they are provided and different
+				const updateFields = {};
+				if (name !== undefined) updateFields.name = name;
+				if (email !== undefined) updateFields.email = email || null;
+				if (address !== undefined) updateFields.address = address || null;
+				if (status !== undefined) updateFields.status = status || "Active";
+				if (profile_img) {
+					updateFields.profile_img = saveBase64File(profile_img, "customer");
+				}
+
+				if (Object.keys(updateFields).length > 0) {
+					await customer.update(updateFields);
+				}
+
+				// Update KYC details if provided
+				if (idType !== undefined || idNumber !== undefined || kycDocumentImg !== undefined) {
+					const { CustomerKyc } = require("../../models");
+					let dbKyc = await CustomerKyc.findOne({ where: { customer_id: customer.id } });
+
+					if (dbKyc) {
+						const kycUpdates = {};
+						if (idType !== undefined) kycUpdates.id_type = idType;
+						if (idNumber !== undefined) kycUpdates.id_number = idNumber;
+						kycUpdates.kyc_status = "Verified";
+						await dbKyc.update(kycUpdates);
+					} else {
+						await CustomerKyc.create({
+							customer_id: customer.id,
+							id_type: idType || null,
+							id_number: idNumber || null,
+							kyc_status: "Verified",
+						});
+					}
+
+					if (kycDocumentImg !== undefined) {
+						await syncCustomerKycDocuments(customer.id, kycDocumentImg);
+					}
+				}
+
 				// Create association
 				const formattedJoinedDate = new Date().toISOString().split("T")[0];
 				const association = await VendorCustomer.create({
@@ -906,6 +946,48 @@ async function rejectCustomerKyc(req, res) {
 	}
 }
 
+/**
+ * Check if customer with phone number exists globally
+ */
+async function checkCustomerPhone(req, res) {
+	try {
+		const { phone } = req.query;
+		if (!phone) {
+			return sendError(res, "Phone number is required.", {}, 400);
+		}
+
+		// Find customer with this phone
+		const { CustomerKyc, CustomerKycDocument } = require("../../models");
+		const customer = await Customer.findOne({
+			where: { phone },
+			include: [
+				{ model: CustomerKyc, as: "kyc" },
+				{ model: CustomerKycDocument, as: "kycDocuments" },
+			],
+		});
+
+		if (!customer) {
+			return sendSuccess(res, "Customer not found.", { exists: false });
+		}
+
+		// Check if already associated with this vendor
+		const vendorId = req.user.id;
+		const { VendorCustomer } = require("../../models");
+		const association = await VendorCustomer.findOne({
+			where: { customer_id: customer.id, vendor_id: vendorId }
+		});
+
+		return sendSuccess(res, "Customer check complete.", {
+			exists: true,
+			alreadyAssociated: !!association,
+			customer: formatCustomer(customer, association || null),
+		});
+	} catch (error) {
+		console.error("[CustomerController] checkCustomerPhone error:", error.message);
+		return sendError(res, "Internal server error checking phone.", {}, 500);
+	}
+}
+
 module.exports = {
 	getCustomers,
 	getCustomer,
@@ -917,4 +999,5 @@ module.exports = {
 	updateCustomerKyc,
 	approveCustomerKyc,
 	rejectCustomerKyc,
+	checkCustomerPhone,
 };

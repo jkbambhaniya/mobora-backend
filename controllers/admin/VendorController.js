@@ -44,7 +44,8 @@ async function listVendors(req, res) {
 			order,
 			limit: limitNum,
 			offset,
-			distinct: true // ensures correct counts with includes
+			distinct: true, // ensures correct counts with includes
+			subQuery: false
 		});
 
 		const totalPages = Math.ceil(count / limitNum);

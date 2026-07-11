@@ -52,6 +52,10 @@ const createCustomerSchema = yup.object().shape({
     .string()
     .trim()
     .nullable()
+    .notRequired(),
+  associateExisting: yup
+    .boolean()
+    .nullable()
     .notRequired()
 });
 

@@ -13,6 +13,12 @@ const {
 
 // Protected endpoints (requires valid JWT token and 'vendor' role)
 router.get(
+	"/check-phone",
+	authenticateToken,
+	requireRole("vendor"),
+	customerController.checkCustomerPhone,
+);
+router.get(
 	"/",
 	authenticateToken,
 	requireRole("vendor"),
